@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}{{ product.name }}{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>{{ product.name }}</h1>
+  <div class="head-actions">
+    <a class="btn" href="/products/{{ product.id }}/edit">Редагувати</a>
+    <a class="btn btn-ghost" href="/products">До списку</a>
+  </div>
+</div>
+
+<section class="card">
+  <dl class="props">
+    <dt>Магазин</dt><dd>{{ product.shop.title }} <span class="muted">({{ product.shop.slug }})</span></dd>
+    <dt>URL</dt><dd><a href="{{ product.url }}" target="_blank" rel="noopener">{{ product.url }}</a></dd>
+    <dt>Артикул</dt><dd>{{ product.external_id or '—' }}</dd>
+    <dt>Категорія</dt><dd>{{ product.category or '—' }}</dd>
+    <dt>Статус</dt><dd>{% if product.is_active %}активний{% else %}вимкнено{% endif %}</dd>
+    <dt>Створено</dt><dd>{{ product.created_at.strftime('%d.%m.%Y %H:%M') }}</dd>
+    <dt>Оновлено</dt><dd>{{ product.updated_at.strftime('%d.%m.%Y %H:%M') }}</dd>
+    {% if product.notes %}<dt>Нотатки</dt><dd>{{ product.notes }}</dd>{% endif %}
+  </dl>
+</section>
+
+<section class="card">
+  <h2>Додати ціну вручну</h2>
+  <form class="inline-form" method="post" action="/products/{{ product.id }}/prices">
+    <input type="text" name="price" placeholder="Ціна" required>
+    <input type="text" name="old_price" placeholder="Стара ціна">
+    <input type="text" name="currency" value="UAH" maxlength="8" size="5">
+    <label class="check"><input type="checkbox" name="in_stock" value="true" checked> в наявності</label>
+    <button class="btn btn-primary" type="submit">Додати</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Історія цін <span class="muted">({{ prices|length }})</span></h2>
+  {% if prices %}
+  <table class="grid">
+    <thead>
+      <tr><th>Дата</th><th class="num">Ціна</th><th class="num">Стара ціна</th><th>Наявність</th><th class="actions"></th></tr>
+    </thead>
+    <tbody>
+      {% for price in prices %}
+      <tr>
+        <td>{{ price.parsed_at.strftime('%d.%m.%Y %H:%M') }}</td>
+        <td class="num"><strong>{{ '%.2f'|format(price.price) }}</strong> {{ price.currency }}</td>
+        <td class="num">{% if price.old_price %}<span class="strike">{{ '%.2f'|format(price.old_price) }}</span>{% else %}—{% endif %}</td>
+        <td>{% if price.in_stock %}<span class="tag tag-ok">є</span>{% else %}<span class="tag tag-off">немає</span>{% endif %}</td>
+        <td class="actions">
+          <form method="post" action="/prices/{{ price.id }}/delete">
+            <input type="hidden" name="product_id" value="{{ product.id }}">
+            <button class="btn btn-sm btn-danger" type="submit">×</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">Записів ще немає.</p>
+  {% endif %}
+</section>
+{% endblock %}

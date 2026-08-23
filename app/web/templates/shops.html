@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Магазини{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Магазини <span class="muted">({{ shops|length }})</span></h1>
+</div>
+
+<section class="card">
+  <h2>Новий магазин</h2>
+  <form class="inline-form" method="post" action="/shops/new">
+    <input type="text" name="slug" placeholder="slug (як у парсера)" required>
+    <input type="text" name="title" placeholder="Назва" required>
+    <input type="url" name="base_url" placeholder="https://example.com">
+    <label class="check"><input type="checkbox" name="is_active" value="true" checked> активний</label>
+    <button class="btn btn-primary" type="submit">Створити</button>
+  </form>
+  <p class="muted small">
+    Slug має збігатися з атрибутом <code>name</code> у класі парсера — тоді парсер писатиме дані в цей магазин.
+    Якщо магазину немає, парсер створить його сам.
+  </p>
+</section>
+
+{% if shops %}
+{# форми оголошені поза таблицею — поля прив'язані до них атрибутом form= #}
+{% for shop in shops %}
+<form id="shop-{{ shop.id }}" method="post" action="/shops/{{ shop.id }}/edit"></form>
+<form id="shop-del-{{ shop.id }}" method="post" action="/shops/{{ shop.id }}/delete"></form>
+{% endfor %}
+
+<table class="grid">
+  <thead>
+    <tr><th>Slug</th><th>Назва</th><th>Сайт</th><th class="num">Товарів</th><th>Активний</th><th class="actions">Дії</th></tr>
+  </thead>
+  <tbody>
+    {% for shop in shops %}
+    <tr>
+      <td><code>{{ shop.slug }}</code></td>
+      <td><input type="text" name="title" value="{{ shop.title }}" form="shop-{{ shop.id }}" required></td>
+      <td><input type="url" name="base_url" value="{{ shop.base_url }}" form="shop-{{ shop.id }}"></td>
+      <td class="num"><a href="/products?shop_id={{ shop.id }}">{{ counts.get(shop.id, 0) }}</a></td>
+      <td>
+        <label class="check">
+          <input type="checkbox" name="is_active" value="true" form="shop-{{ shop.id }}" {% if shop.is_active %}checked{% endif %}>
+        </label>
+      </td>
+      <td class="actions">
+        <button class="btn btn-sm" type="submit" form="shop-{{ shop.id }}">Зберегти</button>
+        <button class="btn btn-sm btn-danger" type="submit" form="shop-del-{{ shop.id }}"
+                onclick="return confirm('Видалити магазин «{{ shop.title|e }}» разом з усіма його товарами і цінами?');">
+          Видалити
+        </button>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="empty">Магазинів ще немає.</p>
+{% endif %}
+{% endblock %}

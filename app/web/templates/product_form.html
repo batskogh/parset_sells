@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}{% if product %}Редагування товару{% else %}Новий товар{% endif %}{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>{% if product %}Редагування товару{% else %}Новий товар{% endif %}</h1>
+  <a class="btn btn-ghost" href="{% if product %}/products/{{ product.id }}{% else %}/products{% endif %}">Назад</a>
+</div>
+
+<form class="card form" method="post"
+      action="{% if product %}/products/{{ product.id }}/edit{% else %}/products/new{% endif %}">
+
+  <label>Магазин
+    <select name="shop_id" required>
+      {% for shop in shops %}
+        <option value="{{ shop.id }}" {% if product and product.shop_id == shop.id %}selected{% endif %}>
+          {{ shop.title }} ({{ shop.slug }})
+        </option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <label>Назва
+    <input type="text" name="name" required maxlength="512" value="{{ product.name if product else '' }}">
+  </label>
+
+  <label>URL товару
+    <input type="url" name="url" required maxlength="1024" value="{{ product.url if product else '' }}">
+  </label>
+
+  <div class="row">
+    <label>Артикул / SKU
+      <input type="text" name="external_id" value="{{ product.external_id or '' if product else '' }}">
+    </label>
+    <label>Категорія
+      <input type="text" name="category" value="{{ product.category or '' if product else '' }}">
+    </label>
+  </div>
+
+  <label>Зображення (URL)
+    <input type="url" name="image_url" value="{{ product.image_url or '' if product else '' }}">
+  </label>
+
+  <label>Нотатки
+    <textarea name="notes" rows="3">{{ product.notes or '' if product else '' }}</textarea>
+  </label>
+
+  {% if not product %}
+  <div class="row">
+    <label>Початкова ціна (необов'язково)
+      <input type="text" name="price" placeholder="1299.00">
+    </label>
+    <label>Валюта
+      <input type="text" name="currency" value="UAH" maxlength="8">
+    </label>
+  </div>
+  {% endif %}
+
+  <label class="check">
+    <input type="checkbox" name="is_active" value="true" {% if not product or product.is_active %}checked{% endif %}>
+    Активний (парсер стежить за ціною)
+  </label>
+
+  <div class="form-actions">
+    <button class="btn btn-primary" type="submit">Зберегти</button>
+    {% if product %}
+    <!-- кнопка сабмітить окрему форму нижче (форми не можна вкладати) -->
+    <button class="btn btn-danger" type="submit" form="delete-product"
+            onclick="return confirm('Видалити товар разом з історією цін?');">Видалити</button>
+    {% endif %}
+  </div>
+</form>
+
+{% if product %}
+<form id="delete-product" method="post" action="/products/{{ product.id }}/delete"></form>
+{% endif %}
+
+{% if shops|length == 0 %}
+<p class="empty">Спершу створіть хоча б один <a href="/shops">магазин</a>.</p>
+{% endif %}
+{% endblock %}

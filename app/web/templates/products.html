@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Товари{% endblock %}
+
+{% block content %}
+<div class="page-head">
+  <h1>Товари <span class="muted">({{ total }})</span></h1>
+  <a class="btn btn-primary" href="/products/new">+ Додати товар</a>
+</div>
+
+<form class="filters" method="get" action="/products">
+  <input type="search" name="search" value="{{ search }}" placeholder="Пошук за назвою, артикулом, URL">
+  <select name="shop_id">
+    <option value="">— усі магазини —</option>
+    {% for shop in shops %}
+      <option value="{{ shop.id }}" {% if shop_id == shop.id %}selected{% endif %}>{{ shop.title }}</option>
+    {% endfor %}
+  </select>
+  <label class="check">
+    <input type="checkbox" name="only_active" value="true" {% if only_active %}checked{% endif %}> лише активні
+  </label>
+  <button class="btn" type="submit">Фільтрувати</button>
+  <a class="btn btn-ghost" href="/products">Скинути</a>
+</form>
+
+{% if products %}
+<table class="grid">
+  <thead>
+    <tr>
+      <th>Назва</th>
+      <th>Магазин</th>
+      <th class="num">Поточна ціна</th>
+      <th>Дата ціни</th>
+      <th class="num">Записів</th>
+      <th>Статус</th>
+      <th class="actions">Дії</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for product in products %}
+    {% set last = product.prices[0] if product.prices else None %}
+    <tr>
+      <td>
+        <a href="/products/{{ product.id }}">{{ product.name }}</a>
+        {% if product.external_id %}<div class="muted small">арт. {{ product.external_id }}</div>{% endif %}
+      </td>
+      <td>{{ product.shop.title }}</td>
+      <td class="num">
+        {% if last %}
+          <strong>{{ '%.2f'|format(last.price) }}</strong> {{ last.currency }}
+          {% if last.old_price %}<div class="muted small strike">{{ '%.2f'|format(last.old_price) }}</div>{% endif %}
+        {% else %}<span class="muted">—</span>{% endif %}
+      </td>
+      <td class="small">
+        {% if last %}{{ last.parsed_at.strftime('%d.%m.%Y %H:%M') }}
+        {% else %}<span class="muted">—</span>{% endif %}
+      </td>
+      <td class="num">{{ product.prices|length }}</td>
+      <td>
+        {% if product.is_active %}<span class="tag tag-ok">активний</span>
+        {% else %}<span class="tag">вимкнено</span>{% endif %}
+      </td>
+      <td class="actions">
+        <a class="btn btn-sm" href="/products/{{ product.id }}/edit">Редагувати</a>
+        <form method="post" action="/products/{{ product.id }}/delete"
+              onsubmit="return confirm('Видалити товар «{{ product.name|e }}» разом з історією цін?');">
+          <button class="btn btn-sm btn-danger" type="submit">Видалити</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% if pages > 1 %}
+<div class="pager">
+  {% for p in range(1, pages + 1) %}
+    <a class="page {% if p == page %}current{% endif %}"
+       href="/products?page={{ p }}{% if search %}&search={{ search }}{% endif %}{% if shop_id %}&shop_id={{ shop_id }}{% endif %}{% if only_active %}&only_active=true{% endif %}">{{ p }}</a>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% else %}
+<p class="empty">Товарів немає. Запустіть парсер (<code>python run_parser.py --all</code>) або додайте товар вручну.</p>
+{% endif %}
+{% endblock %}
