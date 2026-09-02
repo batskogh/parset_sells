@@ -21,7 +21,9 @@ import sys
 from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 
 from app.bot.factory import TokenMissingError, create_bot
+from app.bot.texts import доби, shop_recovered, shop_silent_alert
 from app.config import get_settings
+from app.core.health import HealthVerdict, check_shops, collect_states, mark_told
 from app.core.notifier import collect, mark_sent
 from app.db import repository as repo
 from app.db.base import dispose_db, init_db, session_scope
@@ -41,6 +43,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="враховувати й товари, яких зараз немає в наявності",
     )
+    parser.add_argument(
+        "--skip-health",
+        action="store_true",
+        help="не перевіряти, чи всі магазини читаються",
+    )
     parser.add_argument("--log-level", default=None, help="DEBUG/INFO/WARNING")
     return parser
 
@@ -51,9 +58,21 @@ async def main_async(args: argparse.Namespace) -> int:
     async with session_scope() as session:
         outgoing = await collect(session, only_in_stock=not args.all_products)
 
-    if not outgoing:
-        print("Нема про що писати: нових знижок немає.")
+    # Здоров'я магазинів перевіряється тут навмисно, а не окремим юнітом:
+    # мовчазний магазин найпомітніший саме тоді, коли писати нема про що —
+    # тиша в розсилці і є першим симптомом
+    verdicts = [] if args.skip_health else await _check_health()
+
+    if not outgoing and not verdicts:
+        print("Нема про що писати: нових знижок немає, магазини читаються.")
         return 0
+
+    if verdicts:
+        print(f"Про магазини: {len(verdicts)}")
+        for verdict in verdicts:
+            стан = f"мовчить {доби(verdict.silent_days)}" if verdict.silent else "знову читається"
+            print(f"  → власнику: {verdict.shop.title} — {стан}")
+        print()
 
     print(f"Готово до відправки: {len(outgoing)}\n")
     for item in outgoing:
@@ -73,6 +92,7 @@ async def main_async(args: argparse.Namespace) -> int:
 
     надіслано = 0
     try:
+        await _tell_owner_about_shops(bot, verdicts)
         for item in outgoing:
             try:
                 await bot.send_message(
@@ -100,6 +120,47 @@ async def main_async(args: argparse.Namespace) -> int:
 
     print(f"\nНадіслано: {надіслано} з {len(outgoing)}")
     return 0
+
+
+async def _check_health() -> list[HealthVerdict]:
+    """Кому з магазинів погано просто зараз."""
+    async with session_scope() as session:
+        states = await collect_states(session)
+    return check_shops(states)
+
+
+async def _tell_owner_about_shops(bot, verdicts: list[HealthVerdict]) -> None:
+    """Пише власнику про зламані й одужалі магазини.
+
+    Мітка ставиться лише після вдалої відправки: інакше після збою мережі
+    магазин вважався б «уже обговореним», і про поламаний парсер не сказали
+    б ніколи.
+    """
+    owner = get_settings().telegram_chat_id
+    if not owner or not verdicts:
+        return
+
+    for verdict in verdicts:
+        shop = verdict.shop
+        if verdict.silent:
+            text = shop_silent_alert(
+                title=shop.title,
+                slug=shop.slug,
+                days=verdict.silent_days,
+                products=shop.products,
+                error=shop.last_error,
+            )
+        else:
+            text = shop_recovered(title=shop.title)
+
+        try:
+            await bot.send_message(owner, text, disable_web_page_preview=True)
+        except Exception:  # noqa: BLE001 — один невдалий лист не спиняє решту
+            logger.exception("Не вдалося написати власнику про %s", shop.slug)
+            continue
+
+        async with session_scope() as session:
+            await mark_told(session, verdict)
 
 
 def main() -> int:

@@ -75,6 +75,8 @@ class Settings:
     notify_cooldown_hours: int
     notify_deeper_percent: float
     shop_request_cooldown_hours: int
+    health_silent_days: int
+    health_repeat_hours: int
 
     @property
     def db_url(self) -> str:
@@ -115,4 +117,6 @@ def get_settings() -> Settings:
         notify_cooldown_hours=_get_int("NOTIFY_COOLDOWN_HOURS", 24),
         notify_deeper_percent=_get_float("NOTIFY_DEEPER_PERCENT", 10.0),
         shop_request_cooldown_hours=_get_int("SHOP_REQUEST_COOLDOWN_HOURS", 24),
+        health_silent_days=_get_int("HEALTH_SILENT_DAYS", 2),
+        health_repeat_hours=_get_int("HEALTH_REPEAT_HOURS", 24),
     )

@@ -38,6 +38,11 @@ class Shop(Base):
     base_url: Mapped[str] = mapped_column(String(512), default="")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    # коли власнику сказали, що магазин мовчить. Порожньо — або все гаразд,
+    # або про мовчання ще не казали; заповнено — щоб не повторювати щодня
+    silence_alert_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
 
     products: Mapped[list["Product"]] = relationship(
         back_populates="shop",
@@ -256,3 +261,41 @@ class ShopRequest(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<ShopRequest {self.host} user={self.user_id}>"
+
+
+class ShopRun(Base):
+    """Один прогін одного магазину: коли, скільки товарів, скільки помилок.
+
+    Потрібен, щоб відповісти на питання «коли цей магазин востаннє справді
+    читався». Побічними ознаками це не визначається надійно: `prices.parsed_at`
+    перестає оновлюватись, щойно хтось увімкне `STORE_PRICE_ONLY_ON_CHANGE`,
+    а `products.updated_at` не рухається, поки в картці нічого не змінилось.
+    Обидва мовчали б однаково і про здоровий магазин зі стабільною ціною, і
+    про мертвий.
+
+    Ключ — `shop_slug`, а не посилання на `shops`: магазин, який жодного разу
+    не віддав товару, у таблиці магазинів може й не з'явитись, а знати про
+    його мовчання треба саме тоді.
+    """
+
+    __tablename__ = "shop_runs"
+    __table_args__ = (Index("ix_shop_run_slug_time", "shop_slug", "finished_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    shop_slug: Mapped[str] = mapped_column(String(64), index=True)
+    items: Mapped[int] = mapped_column(default=0)
+    errors: Mapped[int] = mapped_column(default=0)
+    # перша помилка прогону: повний список у журналі, тут — щоб було що показати
+    error_text: Mapped[str | None] = mapped_column(Text, default=None)
+    duration: Mapped[float] = mapped_column(default=0.0)
+    finished_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+
+    @property
+    def productive(self) -> bool:
+        """Прогін вважається вдалим, якщо магазин щось віддав."""
+        return self.items > 0
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<ShopRun {self.shop_slug} товарів={self.items} помилок={self.errors}>"

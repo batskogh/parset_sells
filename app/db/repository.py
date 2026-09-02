@@ -19,6 +19,7 @@ from app.db.models import (
     Product,
     Shop,
     ShopRequest,
+    ShopRun,
     Subscription,
     TelegramUser,
     utcnow,
@@ -571,3 +572,81 @@ async def list_shop_requests(session: AsyncSession, *, limit: int = 50) -> list[
         ShopDemand(host=host, times=int(times), people=int(people), last_notified_at=last)
         for host, times, people, last in rows
     ]
+
+
+# ------------------------------------------------------- журнал прогонів
+
+
+async def add_shop_run(
+    session: AsyncSession,
+    *,
+    shop_slug: str,
+    items: int,
+    errors: int,
+    error_text: str | None = None,
+    duration: float = 0.0,
+    finished_at: datetime | None = None,
+) -> ShopRun:
+    """Записує підсумок прогону одного магазину."""
+    row = ShopRun(
+        shop_slug=shop_slug,
+        items=items,
+        errors=errors,
+        error_text=(error_text or None),
+        duration=duration,
+        finished_at=finished_at or utcnow(),
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+async def last_successful_runs(session: AsyncSession) -> dict[str, datetime]:
+    """Коли кожен магазин востаннє щось віддав."""
+    stmt = (
+        select(ShopRun.shop_slug, func.max(ShopRun.finished_at))
+        .where(ShopRun.items > 0)
+        .group_by(ShopRun.shop_slug)
+    )
+    return {slug: moment for slug, moment in (await session.execute(stmt)).all()}
+
+
+async def last_runs(session: AsyncSession) -> dict[str, ShopRun]:
+    """Останній прогін кожного магазину — вдалий чи ні."""
+    newest = (
+        select(ShopRun.shop_slug, func.max(ShopRun.id).label("last_id"))
+        .group_by(ShopRun.shop_slug)
+        .subquery()
+    )
+    stmt = select(ShopRun).join(newest, ShopRun.id == newest.c.last_id)
+    return {row.shop_slug: row for row in (await session.execute(stmt)).scalars().all()}
+
+
+async def list_shop_runs(
+    session: AsyncSession, *, shop_slug: str | None = None, limit: int = 50
+) -> list[ShopRun]:
+    """Історія прогонів, найновіші перші."""
+    stmt = select(ShopRun).order_by(ShopRun.finished_at.desc(), ShopRun.id.desc()).limit(limit)
+    if shop_slug is not None:
+        stmt = stmt.where(ShopRun.shop_slug == shop_slug)
+    return list((await session.execute(stmt)).scalars().all())
+
+
+async def active_product_counts(session: AsyncSession) -> dict[int, int]:
+    """Скільки активних товарів у кожного магазину — ключ це id магазину."""
+    stmt = (
+        select(Product.shop_id, func.count(Product.id))
+        .where(Product.is_active.is_(True))
+        .group_by(Product.shop_id)
+    )
+    return {shop_id: int(count) for shop_id, count in (await session.execute(stmt)).all()}
+
+
+async def mark_shop_silence_alert(
+    session: AsyncSession, shop_id: int, *, at: datetime | None
+) -> None:
+    """Ставить (або знімає, якщо `at` порожній) мітку сповіщення про мовчання."""
+    shop = await session.get(Shop, shop_id)
+    if shop is not None:
+        shop.silence_alert_at = at
+        await session.flush()

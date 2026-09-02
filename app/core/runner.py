@@ -30,12 +30,40 @@ class RunSummary:
     def total_errors(self) -> int:
         return sum(len(r.errors) for r in self.results)
 
+    @property
+    def productive_sites(self) -> list[ParseResult]:
+        """Магазини, які щось віддали. Помилки при цьому в них бути можуть."""
+        return [r for r in self.results if r.items]
+
+    @property
+    def barren_sites(self) -> list[ParseResult]:
+        """Магазини, з яких не вийшло нічого."""
+        return [r for r in self.results if not r.items]
+
+    @property
+    def exit_code(self) -> int:
+        """0 — зібрано хоч щось; 1 — не зібрано нічого.
+
+        Раніше тут була одна помилка будь-де = ненульовий код, і systemd
+        показував увесь прогін як `failed` через один недоступний магазин.
+        Це неправда: решта магазинів зібралась, ціни в базі, знижки
+        порахуються. Провал — це коли не вийшло нічого й ні з ким.
+
+        Частковий збій не зникає безслідно: він видний у журналі прогону,
+        а якщо магазин мовчить не один день, про це скаже перевірка
+        здоров'я (`app.core.health`) — окремо й адресно.
+        """
+        return 0 if self.productive_sites else 1
+
     def render(self) -> str:
         lines = [
             f"Прогін завершено за {self.duration:.1f}с: "
             f"сайтів {len(self.results)}, товарів {self.total_items}, "
             f"помилок {self.total_errors}"
         ]
+        if self.barren_sites and self.productive_sites:
+            мовчуни = ", ".join(r.shop_slug for r in self.barren_sites)
+            lines.append(f"  Нічого не дали: {мовчуни} — решта зібралась, прогін не провалено")
         for result in self.results:
             mark = "OK " if result.ok else "ERR"
             lines.append(

@@ -15,6 +15,7 @@ import logging
 import sys
 
 from app.config import get_settings
+from app.core.health import record_runs
 from app.core.runner import ParserRunner
 from app.db import repository as repo
 from app.db.base import dispose_db, init_db, session_scope
@@ -106,10 +107,30 @@ async def main_async(args: argparse.Namespace) -> int:
         delay_override = DelayPolicy(min_delay=min_delay, max_delay=max_delay)
 
     await init_db()
-    parsers = [
-        await build_parser(cls, delay=delay_override, limit=args.limit, from_db=not args.from_code)
-        for cls in classes
-    ]
+
+    # Підготовка теж може впасти — база не відповіла, у магазина зіпсований
+    # список адрес. Раніше це валило весь прогін ще до першого запиту, і
+    # решта магазинів не отримувала свого шансу
+    parsers = []
+    broken: list[tuple[str, str]] = []
+    for cls in classes:
+        try:
+            parsers.append(
+                await build_parser(
+                    cls, delay=delay_override, limit=args.limit, from_db=not args.from_code
+                )
+            )
+        except Exception as помилка:  # noqa: BLE001 — один магазин не валить прогін
+            logging.getLogger("parser.targets").exception(
+                "%s не вдалося підготувати", cls.name
+            )
+            broken.append((cls.name, str(помилка)))
+
+    if not parsers:
+        print("Жоден парсер не вдалося підготувати:")
+        for slug, причина in broken:
+            print(f"  ! {slug}: {причина}")
+        return 1
 
     runner = ParserRunner(
         parsers,
@@ -118,7 +139,14 @@ async def main_async(args: argparse.Namespace) -> int:
     )
     summary = await runner.run()
     print(summary.render())
-    return 0 if summary.total_errors == 0 else 1
+    for slug, причина in broken:
+        print(f"  [ERR] {slug}: не вдалося підготувати — {причина}")
+
+    if not args.dry_run:
+        async with session_scope() as session:
+            await record_runs(session, summary, failed_to_build=broken)
+
+    return summary.exit_code
 
 
 def main() -> int:
