@@ -86,8 +86,10 @@ echo "Оновлення $BRANCH: $(as_app git rev-parse --short HEAD) -> $(as_a
 # Заголовки нових комітів — щоб у телеграмі було видно, за що оновились
 mapfile -t COMMITS < <(as_app git log --format=%s "$BEFORE..$AFTER" | head -10)
 COMMIT_ARGS=()
-for заголовок in "${COMMITS[@]}"; do
-    COMMIT_ARGS+=(--commit "$заголовок")
+# ім'я змінної тут латиницею навмисно: кирилиця в іменах — синтаксична
+# помилка bash, і цикл мовчки не виконався б
+for subject in "${COMMITS[@]}"; do
+    COMMIT_ARGS+=(--commit "$subject")
 done
 
 # --- власне оновлення ---------------------------------------------------------
