@@ -1,0 +1,24 @@
+# Щоденний обхід магазинів. Запускається таймером, не постійно.
+
+[Unit]
+Description=Парсер цін — обхід магазинів
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pricebot
+Group=pricebot
+WorkingDirectory=/opt/parset_sells
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/parset_sells/.venv/bin/python run_parser.py --all
+
+# Обхід не має тривати вічно: якщо магазин відповідає нескінченно повільно,
+# краще обірвати прогін, ніж лишити його висіти до наступного дня
+TimeoutStartSec=30min
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/parset_sells/data /opt/parset_sells/logs

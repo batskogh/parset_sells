@@ -1,0 +1,40 @@
+# Телеграм-бот: працює постійно, приймає посилання й команди.
+#
+# Встановлення:
+#   sudo cp deploy/systemd/*.service deploy/systemd/*.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now pricebot.service
+
+[Unit]
+Description=Парсер цін — телеграм-бот
+After=network-online.target
+Wants=network-online.target
+
+# Захист від нескінченного циклу перезапусків при зламаному конфізі:
+# п'ять спроб за хвилину, далі systemd зупиняється й чекає на людину.
+# Ці ключі належать саме секції [Unit] — у [Service] вони мовчки ігноруються
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Service]
+Type=simple
+User=pricebot
+Group=pricebot
+WorkingDirectory=/opt/parset_sells
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/parset_sells/.venv/bin/python run_bot.py
+
+# Бот має бути живим завжди: падіння мережі чи перезапуск Telegram
+# не привід лишати людей без відповіді
+Restart=always
+RestartSec=10
+
+# Дрібні обмеження: службі не потрібен доступ нікуди, крім свого каталогу
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/parset_sells/data /opt/parset_sells/logs
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Розсилка сповіщень о 8:00
+
+[Timer]
+# Через годину після обходу: за цей час парсинг встигає завершитись
+# навіть із розкидом і повільними магазинами
+OnCalendar=*-*-* 08:00:00
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

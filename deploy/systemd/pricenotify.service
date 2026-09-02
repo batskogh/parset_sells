@@ -1,0 +1,22 @@
+# Розсилка сповіщень. Окремо від обходу: якщо парсинг упав,
+# розсилка все одно перевірить те, що вже є в базі.
+
+[Unit]
+Description=Парсер цін — розсилка сповіщень
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pricebot
+Group=pricebot
+WorkingDirectory=/opt/parset_sells
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/parset_sells/.venv/bin/python run_notify.py --send
+TimeoutStartSec=15min
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/parset_sells/data /opt/parset_sells/logs

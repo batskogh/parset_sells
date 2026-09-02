@@ -1,0 +1,15 @@
+[Unit]
+Description=Парсер цін — резервна копія бази
+
+[Service]
+Type=oneshot
+User=pricebot
+Group=pricebot
+WorkingDirectory=/opt/parset_sells
+ExecStart=/opt/parset_sells/.venv/bin/python deploy/backup_db.py --keep 14
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/parset_sells/data /opt/parset_sells/backups
