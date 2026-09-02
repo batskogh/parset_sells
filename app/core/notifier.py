@@ -26,6 +26,7 @@ from app.bot.texts import discount_alert
 from app.core.discount import DiscountRules, DiscountSignal, price_mode, to_cents
 from app.core.discount_scan import MAX_PRODUCTS
 from app.core.notify_log import LastNotification, NotifyRules, should_notify
+from app.core.timeline import daily_values
 from app.db import repository as repo
 from app.db.models import Product, TelegramUser
 
@@ -86,7 +87,9 @@ async def collect(
         if only_in_stock and not prices[0].in_stock:
             continue
 
-        history = [price.price for price in reversed(prices)]
+        # по добах, а не по сирих замірах: обхід іде кілька разів на день,
+        # і `min_samples` має лишатись кількістю днів спостережень
+        history = daily_values((price.parsed_at, price.price) for price in prices)
         if len(history) < rules.min_samples:
             continue
 
@@ -94,7 +97,7 @@ async def collect(
         if mode is None or mode.value <= 0:
             continue
 
-        current = history[-1]
+        current = prices[0].price          # найсвіжіша ціна, а не денний зріз
         drop = (mode.value - current) / mode.value * Decimal("100")
 
         for subscription in await repo.subscriptions_for_product(session, product.id):

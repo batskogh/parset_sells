@@ -112,6 +112,65 @@ def test_пише_підписнику_про_справжню_знижку(fact
     assert "звично 100.00" in outgoing[0].text
 
 
+async def _наповнити_замірами(session, *, заміри, telegram_id=111):
+    """Історія з довільними моментами замірів: (день вересня, година, ціна)."""
+    shop = Shop(slug="citrus", title="Цитрус", base_url="https://citrus.ua")
+    session.add(shop)
+    await session.flush()
+    product = Product(shop_id=shop.id, name="Часті обходи", url="https://citrus.ua/p/1.html")
+    session.add(product)
+    await session.flush()
+
+    for день, година, ціна in заміри:
+        session.add(
+            Price(
+                product_id=product.id,
+                price=D(ціна),
+                currency="UAH",
+                in_stock=True,
+                parsed_at=datetime(2026, 9, день, година, 0, tzinfo=timezone.utc),
+            )
+        )
+
+    user = TelegramUser(telegram_id=telegram_id, chat_id=telegram_id)
+    session.add(user)
+    await session.flush()
+    session.add(Subscription(user_id=user.id, product_id=product.id))
+    await session.flush()
+    return product
+
+
+def test_частий_обхід_не_прискорює_набір_історії(factory) -> None:
+    """Вісім замірів за дві доби — це два дні спостережень, а не вісім.
+
+    Головний ризик переходу на обхід кожні шість годин: `min_samples`
+    набрався б за півдоби, і бот оголосив би звичною ціну, яку бачив
+    один день. Мода рахується по добах саме тому.
+    """
+    заміри = [(1, г, "100") for г in (0, 6, 12, 18)]
+    заміри += [(2, г, "100") for г in (0, 6, 12)] + [(2, 18, "70")]
+
+    async def наповнення(session):
+        await _наповнити_замірами(session, заміри=заміри)
+
+    assert зібрати(factory, наповнення=наповнення, now=datetime(2026, 9, 3, tzinfo=timezone.utc)) == []
+
+
+def test_після_пʼяти_днів_частий_обхід_дає_сповіщення(factory) -> None:
+    """Ті самі шість годин, але вже п'ять діб — історії досить, знижка видима."""
+    заміри = [(день, г, "100") for день in range(1, 6) for г in (0, 6, 12, 18)]
+    заміри.append((6, 0, "70"))
+
+    async def наповнення(session):
+        await _наповнити_замірами(session, заміри=заміри)
+
+    outgoing = зібрати(
+        factory, наповнення=наповнення, now=datetime(2026, 9, 6, 6, tzinfo=timezone.utc)
+    )
+    assert len(outgoing) == 1
+    assert outgoing[0].signal.drop_percent == D("30.00")
+
+
 def test_не_пише_тому_хто_не_підписаний(factory) -> None:
     """Головна перевірка на переплутування адресатів."""
     async def наповнення(session):

@@ -16,6 +16,7 @@ from decimal import Decimal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.discount import DiscountRules, DiscountSignal, find_discount
+from app.core.timeline import daily_values
 from app.db import repository as repo
 from app.db.models import Product
 
@@ -69,8 +70,9 @@ async def scan_products(
             logger.debug("Пропущено (немає в наявності): %s", product.name[:50])
             continue
 
-        # у зв'язку вони впорядковані від найновішої, а детектор чекає хронологію
-        history = [price.price for price in reversed(prices)]
+        # детектор чекає хронологію; по добах, бо `min_samples` рахує дні
+        # спостережень, а не походи в магазин
+        history = daily_values((price.parsed_at, price.price) for price in prices)
         signal = find_discount(history, rules=rules)
         if signal is not None:
             found.append(ProductDiscount(product=product, signal=signal))

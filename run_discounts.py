@@ -26,6 +26,7 @@ from app.core.aggregate import (
     shop_index,
 )
 from app.core.discount_scan import MAX_PRODUCTS, load_histories, scan_products
+from app.core.timeline import daily_values
 from app.db import repository as repo
 from app.db.base import dispose_db, session_scope
 
@@ -95,7 +96,7 @@ async def print_modes(session, *, rules: DiscountRules, shop_id: int | None) -> 
     )
     print("\nЗвична ціна за історією:\n")
     for product in products:
-        prices = [price.price for price in reversed(product.prices)]
+        prices = daily_values((p.parsed_at, p.price) for p in product.prices)
         mode = price_mode(prices, bucket_percent=rules.bucket_percent) if prices else None
         if mode is None:
             print(f"  {product.name[:52]:<52} історії немає")

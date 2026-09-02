@@ -10,7 +10,15 @@ from __future__ import annotations
 from datetime import date
 from decimal import Decimal
 
-from app.core.timeline import basket_series, daily_last, days_between, fill_forward
+from datetime import datetime, timezone
+
+from app.core.timeline import (
+    basket_series,
+    daily_last,
+    daily_values,
+    days_between,
+    fill_forward,
+)
 
 D = Decimal
 
@@ -22,6 +30,28 @@ def день(number: int) -> date:
 def test_кілька_замірів_за_добу_зводяться_до_останнього() -> None:
     series = daily_last([(день(1), D("100")), (день(1), D("90")), (день(2), D("80"))])
     assert series == {день(1): D("90"), день(2): D("80")}
+
+
+def test_добові_ціни_одного_товару_беруть_останню_за_день() -> None:
+    """Чотири обходи на добу мають дати одну ціну за добу, а не чотири."""
+    момент = lambda д, г: datetime(2026, 9, д, г, 0, tzinfo=timezone.utc)
+    значення = daily_values(
+        [
+            (момент(1, 0), D("100")),
+            (момент(1, 6), D("100")),
+            (момент(1, 12), D("95")),
+            (момент(1, 18), D("90")),
+            (момент(2, 0), D("80")),
+        ]
+    )
+    assert значення == [D("90"), D("80")]
+
+
+def test_добові_ціни_не_залежать_від_порядку_замірів() -> None:
+    """З бази ціни приходять найновішими вперед — це не має міняти результат."""
+    момент = lambda д, г: datetime(2026, 9, д, г, 0, tzinfo=timezone.utc)
+    заміри = [(момент(1, 0), D("100")), (момент(1, 18), D("90")), (момент(2, 0), D("80"))]
+    assert daily_values(заміри) == daily_values(reversed(заміри))
 
 
 def test_доби_відрізка_включно_з_краями() -> None:
