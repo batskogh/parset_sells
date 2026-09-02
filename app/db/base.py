@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -53,13 +54,21 @@ def get_session_factory() -> async_sessionmaker[AsyncSession]:
 
 
 async def init_db() -> None:
-    """Створює таблиці й службові view, якщо їх ще немає."""
+    """Доводить схему до останньої ревізії й оновлює службові view.
+
+    Схему веде alembic, а не `create_all`: наявні таблиці той не міняє, тож
+    будь-яка правка моделей проходила б повз базу непомітно. Подробиці й
+    випадок бази зі спадщини — в `app.db.migrate`.
+    """
     from app.db import models  # noqa: F401  — щоб моделі зареєструвались у метаданих
+    from app.db.migrate import upgrade_database
     from app.db.views import create_views
+
+    # alembic працює синхронним драйвером, тож не блокуємо цикл подій
+    await asyncio.to_thread(upgrade_database)
 
     engine = get_engine()
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
         await create_views(conn)
 
 

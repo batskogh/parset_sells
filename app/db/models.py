@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
@@ -108,3 +109,71 @@ class Price(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Price {self.price} {self.currency} @ {self.parsed_at}>"
+
+
+class TelegramUser(Base):
+    """Людина, що користується ботом.
+
+    `telegram_id` — це BigInteger навмисно: ідентифікатори Telegram давно
+    вийшли за межі 32 біт, і на звичайному Integer частина акаунтів просто не
+    збережеться. `chat_id` тримаємо окремо від `telegram_id`, хоч у приватних
+    чатах вони збігаються: у групі це різні числа, і сповіщення йде саме в чат.
+    """
+
+    __tablename__ = "telegram_users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    username: Mapped[str | None] = mapped_column(String(64), default=None)
+    first_name: Mapped[str | None] = mapped_column(String(128), default=None)
+    # вимкнено — коли людина натиснула «стоп» або заблокувала бота
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow
+    )
+
+    subscriptions: Mapped[list["Subscription"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<TelegramUser {self.telegram_id} {self.username or ''}>"
+
+
+class Subscription(Base):
+    """Хто за яким товаром стежить.
+
+    Один товар у базі — один рядок у `products`, скільки б людей за ним не
+    стежило: історія цін спільна, а персональна тут лише підписка. Тому
+    парсер ходить на сторінку один раз, а сповіщення отримують усі підписники.
+
+    `min_drop_percent` дозволяє власний поріг: комусь цікаво від 5%, комусь
+    від 30%. Порожнє поле означає «як налаштовано глобально».
+    """
+
+    __tablename__ = "subscriptions"
+    __table_args__ = (
+        UniqueConstraint("user_id", "product_id", name="uq_subscription_user_product"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("telegram_users.id", ondelete="CASCADE"), index=True
+    )
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), index=True
+    )
+    min_drop_percent: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), default=None)
+    # тимчасово не турбувати, не втрачаючи сам товар зі списку
+    is_muted: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    user: Mapped["TelegramUser"] = relationship(back_populates="subscriptions")
+    product: Mapped["Product"] = relationship(lazy="joined")
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<Subscription user={self.user_id} product={self.product_id}>"
