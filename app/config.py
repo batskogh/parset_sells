@@ -67,10 +67,17 @@ class Settings:
     web_host: str
     web_port: int
     log_level: str
+    telegram_bot_token: str
+    telegram_chat_id: str
 
     @property
     def db_url(self) -> str:
         return f"sqlite+aiosqlite:///{self.db_path.as_posix()}"
+
+    @property
+    def telegram_ready(self) -> bool:
+        """Чи заповнено токен — щоб не падати на порожньому `.env`."""
+        return bool(self.telegram_bot_token)
 
 
 @lru_cache(maxsize=1)
@@ -94,4 +101,6 @@ def get_settings() -> Settings:
         web_host=_get_str("WEB_HOST", "127.0.0.1"),
         web_port=_get_int("WEB_PORT", 8010),
         log_level=_get_str("LOG_LEVEL", "INFO").upper(),
+        telegram_bot_token=_get_str("TELEGRAM_BOT_TOKEN", "").strip(),
+        telegram_chat_id=_get_str("TELEGRAM_CHAT_ID", "").strip(),
     )
