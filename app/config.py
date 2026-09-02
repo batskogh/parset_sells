@@ -69,6 +69,9 @@ class Settings:
     log_level: str
     telegram_bot_token: str
     telegram_chat_id: str
+    discount_min_drop_percent: float
+    discount_min_samples: int
+    discount_bucket_percent: float
 
     @property
     def db_url(self) -> str:
@@ -103,4 +106,7 @@ def get_settings() -> Settings:
         log_level=_get_str("LOG_LEVEL", "INFO").upper(),
         telegram_bot_token=_get_str("TELEGRAM_BOT_TOKEN", "").strip(),
         telegram_chat_id=_get_str("TELEGRAM_CHAT_ID", "").strip(),
+        discount_min_drop_percent=_get_float("DISCOUNT_MIN_DROP_PERCENT", 10.0),
+        discount_min_samples=_get_int("DISCOUNT_MIN_SAMPLES", 5),
+        discount_bucket_percent=_get_float("DISCOUNT_BUCKET_PERCENT", 1.0),
     )
