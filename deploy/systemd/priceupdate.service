@@ -1,0 +1,24 @@
+# Оновлення коду з git. Запускається від root: перезапустити службу бота
+# може лише він. Усі дії з файлами скрипт робить від імені pricebot, щоб не
+# лишати по собі чужих власників.
+
+[Unit]
+Description=Парсер цін — оновлення коду з git
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/parset_sells
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/parset_sells/deploy/update.sh
+
+# Тести на новому коді входять у прогін — це найдовша частина
+TimeoutStartSec=20min
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# git пише в увесь каталог проєкту, а не лише в data — тут інакше не можна
+ReadWritePaths=/opt/parset_sells

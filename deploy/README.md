@@ -79,6 +79,7 @@ cp deploy/systemd/*.service deploy/systemd/*.timer /etc/systemd/system/
 systemctl daemon-reload
 systemctl enable --now pricebot.service
 systemctl enable --now priceparse.timer pricenotify.timer pricebackup.timer
+systemctl enable --now priceupdate.timer
 ```
 
 Що коли працює:
@@ -86,12 +87,18 @@ systemctl enable --now priceparse.timer pricenotify.timer pricebackup.timer
 | Служба | Коли | Що робить |
 |---|---|---|
 | `pricebot.service` | постійно | відповідає в Telegram, приймає посилання |
-| `priceparse.timer` | 07:00 (±30 хв) | обхід магазинів, запис цін |
-| `pricenotify.timer` | 08:00 (±10 хв) | розсилка знижок підписникам |
+| `priceparse.timer` | 00, 06, 12, 18 год (±20 хв) | обхід магазинів, запис цін |
+| `pricenotify.timer` | 01, 07, 13, 19 год (±10 хв) | розсилка знижок підписникам |
+| `priceupdate.timer` | щогодини о :40 (±5 хв) | оновлення коду з git |
 | `pricebackup.timer` | 03:00 | копія бази, тримає 14 останніх |
 
 Розкид часу (`RandomizedDelaySec`) навмисний: рівний ритм запитів секунда в
 секунду виглядає як робот і дратує магазини.
+
+Обхід іде кожні шість годин, бо знижка живе годинами: при щоденному обході
+половину з них видно вже постфактум. На «звичну ціну» це не впливає — мода
+рахується по добових зрізах, тож `DISCOUNT_MIN_SAMPLES` так і лишається
+кількістю днів спостережень, а не походів у магазин.
 
 ## 7. Перевірка
 
@@ -110,14 +117,54 @@ journalctl -u priceparse.service -n 30
 
 ## Оновлення коду
 
+Ходити до машини на горищі не треба: `priceupdate.timer` щогодини дивиться в
+git і, якщо там щось нове, оновлює код сам. Достатньо `git push` — за годину
+в телеграмі буде звіт про те, що оновилось.
+
+Не чекати години:
+
 ```bash
-cd /opt/parset_sells
-sudo -u pricebot git pull
-sudo -u pricebot .venv/bin/pip install -r requirements.txt
-systemctl restart pricebot.service
+sudo systemctl start priceupdate.service
 ```
 
-Міграції бази виконуються самі при старті — окремої команди не треба.
+Що робить `deploy/update.sh`, по порядку:
+
+1. відкладає роботу, якщо саме зараз іде обхід магазинів;
+2. `git fetch` і порівняння з `origin/<гілка>` — якщо нового немає, виходить;
+3. зупиняється, якщо на сервері є незакомічені правки: перезаписати їх мовчки
+   не можна, це єдина копія тієї роботи;
+4. `git merge --ff-only`, далі `pip install` — але лише якщо змінився
+   `requirements.txt`;
+5. міграції бази явно, до перезапуску;
+6. **тести**;
+7. і тільки після зелених тестів — `systemctl restart pricebot.service`.
+
+Головне тут — сьомий крок. Зламаний коміт не має лишати людей без бота, тож
+якщо тести не пройшли, код повертається на попередній коміт (`git reset
+--hard`), служби так і працюють на старій робочій версії, а в телеграм
+приходить хвіст логу з поясненням. Те саме при невдалій міграції чи
+залежностях.
+
+Звіт приходить у будь-якому разі — і про успіх, і про відкат, і про збій.
+Мовчання машини читалося б як «усе гаразд», а це найгірше можливе значення
+для мовчання.
+
+### Якщо репозиторій приватний
+
+`git fetch` має проходити без пароля, інакше оновлення просто мовчатиме про
+збій зв'язку. Найпростіше — ключ розгортання (deploy key) на GitHub:
+
+```bash
+sudo -u pricebot ssh-keygen -t ed25519 -f /opt/parset_sells/.ssh/id_ed25519 -N ""
+sudo -u pricebot cat /opt/parset_sells/.ssh/id_ed25519.pub
+```
+
+Публічний ключ додається в **Settings → Deploy keys** репозиторію (доступ
+лише на читання), а адреса origin змінюється на SSH:
+
+```bash
+sudo -u pricebot git remote set-url origin git@github.com:<власник>/<репо>.git
+```
 
 ## Якщо щось пішло не так
 
@@ -132,6 +179,17 @@ systemd зупиняється й чекає на людину — це захи
 sudo -u pricebot .venv/bin/python run_discounts.py --modes
 sudo -u pricebot .venv/bin/python run_notify.py      # показ без відправки
 ```
+
+**Оновлення не приходить.** Подивіться, що каже сам скрипт:
+
+```bash
+sudo systemctl start priceupdate.service
+journalctl -u priceupdate.service -n 40
+```
+
+Найчастіші причини — репозиторій вимагає пароля (див. вище про deploy key)
+або на сервері лишились правки, зроблені руками: скрипт навмисно зупиняється,
+щоб їх не затерти.
 
 **Магазин перестав парситись.** Швидше за все, змінив розмітку або поставив
 антибот-захист. `run_parser.py --site <slug> --dry-run --log-level DEBUG`
