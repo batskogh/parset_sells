@@ -76,6 +76,8 @@ class Settings:
     discount_min_samples: int
     discount_bucket_percent: float
     notify_cooldown_hours: int
+    notify_quiet_from: int
+    notify_quiet_to: int
     notify_deeper_percent: float
     shop_request_cooldown_hours: int
     health_silent_days: int
@@ -125,6 +127,8 @@ def get_settings() -> Settings:
         discount_min_samples=_get_int("DISCOUNT_MIN_SAMPLES", 5),
         discount_bucket_percent=_get_float("DISCOUNT_BUCKET_PERCENT", 1.0),
         notify_cooldown_hours=_get_int("NOTIFY_COOLDOWN_HOURS", 24),
+        notify_quiet_from=_get_int("NOTIFY_QUIET_FROM", 22) % 24,
+        notify_quiet_to=_get_int("NOTIFY_QUIET_TO", 8) % 24,
         notify_deeper_percent=_get_float("NOTIFY_DEEPER_PERCENT", 10.0),
         shop_request_cooldown_hours=_get_int("SHOP_REQUEST_COOLDOWN_HOURS", 24),
         health_silent_days=_get_int("HEALTH_SILENT_DAYS", 2),

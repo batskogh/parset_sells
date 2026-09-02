@@ -25,6 +25,7 @@ from app.config import get_settings
 from app.core.health import HealthVerdict, check_shops, collect_states, mark_told
 from app.core.logs import setup_logging
 from app.core.notifier import collect, mark_sent
+from app.core.quiet import QuietHours
 from app.db import repository as repo
 from app.db.base import dispose_db, init_db, session_scope
 
@@ -42,6 +43,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--all-products",
         action="store_true",
         help="враховувати й товари, яких зараз немає в наявності",
+    )
+    parser.add_argument(
+        "--anytime",
+        action="store_true",
+        help="надіслати навіть у тихі години",
     )
     parser.add_argument(
         "--skip-health",
@@ -82,6 +88,18 @@ async def main_async(args: argparse.Namespace) -> int:
 
     if not args.send:
         print("\nЦе був показ без відправки. Щоб надіслати: python run_notify.py --send")
+        return 0
+
+    тиша = QuietHours.from_settings()
+    if not args.anytime and тиша.contains():
+        # нічого не запам'ятовуємо: знижка триває днями, і найближчий денний
+        # прогін надішле її як звичайну новину
+        logger.info("Тихі години (%s) — нічого не надсилаю", тиша.describe())
+        print(
+            f"\nЗараз тихі години ({тиша.describe()} за місцевим часом) — мовчу.\n"
+            f"Найближча розсилка після {тиша.next_allowed():%H:%M}. "
+            "Надіслати попри це: --anytime"
+        )
         return 0
 
     try:
