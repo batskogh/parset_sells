@@ -17,10 +17,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import sys
 
 from app.bot.factory import TokenMissingError, create_bot, create_dispatcher, set_bot_commands
-from app.config import get_settings
+from app.core.logs import setup_logging
 from app.db.base import dispose_db, init_db
 
 
@@ -65,15 +64,7 @@ async def main_async(args: argparse.Namespace) -> int:
 
 def main() -> int:
     args = build_arg_parser().parse_args()
-    logging.basicConfig(
-        level=getattr(logging, args.log_level or get_settings().log_level, logging.INFO),
-        format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
-        datefmt="%H:%M:%S",
-        stream=sys.stdout,
-    )
-    logging.getLogger("aiogram.event").setLevel(logging.WARNING)
-    # службовий шум alembic не потрібен у логах бота — міграції видно й так
-    logging.getLogger("alembic.runtime.plugins").setLevel(logging.WARNING)
+    setup_logging("bot", level=args.log_level)
     try:
         return asyncio.run(main_async(args))
     except KeyboardInterrupt:

@@ -67,6 +67,9 @@ class Settings:
     web_host: str
     web_port: int
     log_level: str
+    log_dir: Path
+    log_to_file: bool
+    log_retention_days: int
     telegram_bot_token: str
     telegram_chat_id: str
     discount_min_drop_percent: float
@@ -97,6 +100,10 @@ def get_settings() -> Settings:
         db_path = BASE_DIR / db_path
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
+    log_dir = Path(_get_str("LOG_DIR", "logs"))
+    if not log_dir.is_absolute():
+        log_dir = BASE_DIR / log_dir
+
     return Settings(
         db_path=db_path,
         max_concurrent_sites=_get_int("MAX_CONCURRENT_SITES", 5),
@@ -109,6 +116,9 @@ def get_settings() -> Settings:
         web_host=_get_str("WEB_HOST", "127.0.0.1"),
         web_port=_get_int("WEB_PORT", 8010),
         log_level=_get_str("LOG_LEVEL", "INFO").upper(),
+        log_dir=log_dir,
+        log_to_file=_get_bool("LOG_TO_FILE", True),
+        log_retention_days=_get_int("LOG_RETENTION_DAYS", 14),
         telegram_bot_token=_get_str("TELEGRAM_BOT_TOKEN", "").strip(),
         telegram_chat_id=_get_str("TELEGRAM_CHAT_ID", "").strip(),
         discount_min_drop_percent=_get_float("DISCOUNT_MIN_DROP_PERCENT", 10.0),

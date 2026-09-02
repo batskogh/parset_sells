@@ -100,7 +100,34 @@ systemctl enable --now priceupdate.timer
 рахується по добових зрізах, тож `DISCOUNT_MIN_SAMPLES` так і лишається
 кількістю днів спостережень, а не походів у магазин.
 
-## 7. Перевірка
+## 7. Журнали
+
+Крім stdout, який systemd складає в journald, кожен канал пише власний файл
+у `logs/`:
+
+| Файл | Хто пише |
+|---|---|
+| `logs/parser.log` | обхід магазинів |
+| `logs/notify.log` | розсилка й перевірка здоров'я магазинів |
+| `logs/bot.log` | бот |
+| `logs/discounts.log` | ручні прогони `run_discounts.py` |
+
+Файл ріжеться опівночі й тримається `LOG_RETENTION_DAYS` діб (типово 14).
+Дублювання з journald навмисне: у journald своя ротація і свої ліміти, а
+копію логу зручно віддати або переглянути звичайним `tail`, не згадуючи
+синтаксис `journalctl`.
+
+```bash
+tail -f /opt/parset_sells/logs/parser.log
+grep "Прогін завершено" /opt/parset_sells/logs/parser.log | tail -20
+```
+
+Другий рядок — найкоротший спосіб побачити історію прогонів: підсумок
+кожного пишеться одним рядком саме для цього.
+
+Вимкнути запис у файл: `LOG_TO_FILE=0` в `.env`.
+
+## 8. Перевірка
 
 ```bash
 systemctl status pricebot.service

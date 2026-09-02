@@ -12,27 +12,16 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import sys
 
 from app.config import get_settings
 from app.core.health import record_runs
+from app.core.logs import setup_logging
 from app.core.runner import ParserRunner
 from app.db import repository as repo
 from app.db.base import dispose_db, init_db, session_scope
 from app.parsers.registry import all_parsers, get_parser
 from app.parsers.resolve import supports_single_product
 from app.parsers.throttle import DelayPolicy
-
-
-def setup_logging(level: str) -> None:
-    logging.basicConfig(
-        level=getattr(logging, level, logging.INFO),
-        format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
-        datefmt="%H:%M:%S",
-        stream=sys.stdout,
-    )
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -138,9 +127,12 @@ async def main_async(args: argparse.Namespace) -> int:
         dry_run=args.dry_run,
     )
     summary = await runner.run()
-    print(summary.render())
-    for slug, причина in broken:
-        print(f"  [ERR] {slug}: не вдалося підготувати — {причина}")
+
+    # через логер, а не print: підсумок — найцінніший рядок прогону, і саме
+    # його шукають у файлі через тиждень, коли терміналу вже давно немає
+    рядки = [summary.render()]
+    рядки += [f"  [ERR] {slug}: не вдалося підготувати — {причина}" for slug, причина in broken]
+    logging.getLogger("parser").info("%s", "\n".join(рядки))
 
     if not args.dry_run:
         async with session_scope() as session:
@@ -151,7 +143,9 @@ async def main_async(args: argparse.Namespace) -> int:
 
 def main() -> int:
     args = build_arg_parser().parse_args()
-    setup_logging(args.log_level or get_settings().log_level)
+    файл = setup_logging("parser", level=args.log_level)
+    if файл is not None:
+        logging.getLogger("parser").debug("Журнал прогону: %s", файл)
     try:
         return asyncio.run(_with_cleanup(args))
     except KeyboardInterrupt:

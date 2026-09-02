@@ -16,7 +16,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import sys
 
 from aiogram.exceptions import TelegramForbiddenError, TelegramRetryAfter
 
@@ -24,6 +23,7 @@ from app.bot.factory import TokenMissingError, create_bot
 from app.bot.texts import доби, shop_recovered, shop_silent_alert
 from app.config import get_settings
 from app.core.health import HealthVerdict, check_shops, collect_states, mark_told
+from app.core.logs import setup_logging
 from app.core.notifier import collect, mark_sent
 from app.db import repository as repo
 from app.db.base import dispose_db, init_db, session_scope
@@ -118,6 +118,7 @@ async def main_async(args: argparse.Namespace) -> int:
     finally:
         await bot.session.close()
 
+    logger.info("Надіслано сповіщень: %s з %s", надіслано, len(outgoing))
     print(f"\nНадіслано: {надіслано} з {len(outgoing)}")
     return 0
 
@@ -165,13 +166,7 @@ async def _tell_owner_about_shops(bot, verdicts: list[HealthVerdict]) -> None:
 
 def main() -> int:
     args = build_arg_parser().parse_args()
-    logging.basicConfig(
-        level=getattr(logging, args.log_level or get_settings().log_level, logging.INFO),
-        format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
-        datefmt="%H:%M:%S",
-        stream=sys.stdout,
-    )
-    logging.getLogger("alembic.runtime.plugins").setLevel(logging.WARNING)
+    setup_logging("notify", level=args.log_level)
     try:
         return asyncio.run(_with_cleanup(args))
     except KeyboardInterrupt:

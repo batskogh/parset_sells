@@ -13,11 +13,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import logging
-import sys
 from decimal import Decimal
 
-from app.config import get_settings
 from app.core.discount import DiscountRules, price_mode
 from app.core.aggregate import (
     assortment_report,
@@ -26,6 +23,7 @@ from app.core.aggregate import (
     shop_index,
 )
 from app.core.discount_scan import MAX_PRODUCTS, load_histories, scan_products
+from app.core.logs import setup_logging
 from app.core.timeline import daily_values
 from app.db import repository as repo
 from app.db.base import dispose_db, session_scope
@@ -210,12 +208,7 @@ async def main_async(args: argparse.Namespace) -> int:
 
 def main() -> int:
     args = build_arg_parser().parse_args()
-    logging.basicConfig(
-        level=getattr(logging, args.log_level or get_settings().log_level, logging.INFO),
-        format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
-        datefmt="%H:%M:%S",
-        stream=sys.stdout,
-    )
+    setup_logging("discounts", level=args.log_level)
     try:
         return asyncio.run(_with_cleanup(args))
     except KeyboardInterrupt:
