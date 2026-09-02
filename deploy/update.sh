@@ -22,8 +22,8 @@ APP_DIR="${APP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 APP_USER="${APP_USER:-pricebot}"
 PYTHON="$APP_DIR/.venv/bin/python"
 PIP="$APP_DIR/.venv/bin/pip"
-BOT_SERVICE="pricebot.service"
-PARSE_SERVICE="priceparse.service"
+BOT_SERVICE="${BOT_SERVICE:-pricebot.service}"
+PARSE_SERVICE="${PARSE_SERVICE:-priceparse.service}"
 
 cd "$APP_DIR" || { echo "Немає каталогу $APP_DIR"; exit 1; }
 

@@ -18,11 +18,18 @@ import argparse
 import asyncio
 import sys
 
-from aiogram.exceptions import TelegramAPIError
+from pathlib import Path
 
-from app.bot.factory import TokenMissingError, create_bot
-from app.bot.texts import update_report
-from app.config import get_settings
+# Python кладе в sys.path каталог самого скрипта, а не той, звідки його
+# запустили. Решта точок входу лежить у корені й про це не думає, а цей
+# скрипт живе в deploy/ — без цього рядка `app` для нього не існує
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from aiogram.exceptions import TelegramAPIError  # noqa: E402
+
+from app.bot.factory import TokenMissingError, create_bot  # noqa: E402
+from app.bot.texts import update_report  # noqa: E402
+from app.config import get_settings  # noqa: E402
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
