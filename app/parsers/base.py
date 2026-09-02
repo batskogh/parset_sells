@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -27,7 +28,13 @@ from app.config import get_settings
 from app.parsers.http import DEFAULT_HEADERS, HttpClient, HttpConfig
 from app.parsers.models import ParsedProduct, ParseResult
 from app.parsers.throttle import DelayPolicy
-from app.parsers.utils import absolute_url, clean_text, detect_currency, parse_price
+from app.parsers.utils import (
+    absolute_url,
+    clean_text,
+    detect_currency,
+    parse_price,
+    strip_tracking_params,
+)
 
 
 class BaseParser(ABC):
@@ -362,3 +369,171 @@ class HtmlListParser(BaseParser):
                     await self.delay.wait_page()
                 page_url = next_url
                 page_num += 1
+
+
+class LdJsonProductParser(BaseParser):
+    """Парсер сторінок товарів за розміткою schema.org у `ld+json`.
+
+    Третій рівень ієрархії поруч із `HtmlListParser` — для сайтів, де верстка
+    ненадійна (SPA з генерованими класами), зате на сторінці товару лежить
+    готовий `<script type="application/ld+json">` типу `Product`. Це контракт
+    для пошукових систем: він стабільніший за CSS-селектори, бо магазин ламає
+    його разом зі своєю видимістю в Google.
+
+    Такий парсер обходить не каталог, а список конкретних сторінок товарів —
+    саме так у цьому проєкті й стежать за цінами:
+
+        @register
+        class MyShop(LdJsonProductParser):
+            name = "myshop"
+            title = "My Shop"
+            base_url = "https://myshop.ua"
+            start_urls = ["https://myshop.ua/product/123/"]
+
+    Точкові відмінності сайту перевизначаються методами `extract_*`.
+    """
+
+    # сторінки товарів для ручного прогону; список можна передати в конструктор
+    start_urls: ClassVar[Sequence[str]] = ()
+
+    # чи брати канонічну адресу з самої розмітки (`Product.url`)
+    prefer_canonical_url: ClassVar[bool] = True
+
+    def __init__(self, *, product_urls: Sequence[str] | None = None, **kwargs):
+        super().__init__(**kwargs)
+        self.product_urls = tuple(product_urls or type(self).start_urls)
+        if not self.product_urls:
+            raise ValueError(f"{self.name}: не задано жодної сторінки товару")
+
+    # ------------------------------------------------------- розбір розмітки
+
+    @staticmethod
+    def ld_json_nodes(soup: BeautifulSoup) -> list[dict]:
+        """Усі об'єкти з `<script type="application/ld+json">` сторінки."""
+        nodes: list[dict] = []
+        for tag in soup.find_all("script", type="application/ld+json"):
+            try:
+                data = json.loads(tag.string or "")
+            except (json.JSONDecodeError, TypeError):
+                continue
+            nodes.extend(
+                node for node in (data if isinstance(data, list) else [data])
+                if isinstance(node, dict)
+            )
+        return nodes
+
+    def find_product(self, soup: BeautifulSoup) -> dict | None:
+        for node in self.ld_json_nodes(soup):
+            if node.get("@type") == "Product":
+                return node
+        return None
+
+    @staticmethod
+    def first_offer(product: dict) -> dict:
+        """`offers` буває об'єктом, буває списком — зводимо до одного."""
+        offers = product.get("offers") or {}
+        if isinstance(offers, list):
+            return next((offer for offer in offers if isinstance(offer, dict)), {})
+        return offers if isinstance(offers, dict) else {}
+
+    # ------------------------------------------------------------ витягування
+
+    def extract_price(self, product: dict, offer: dict) -> Decimal | None:
+        price = offer.get("price")
+        if price is None:
+            spec = offer.get("priceSpecification") or {}
+            price = spec.get("price") if isinstance(spec, dict) else None
+        return parse_price(price)
+
+    def extract_old_price(self, product: dict, offer: dict) -> Decimal | None:
+        """Ціна «до знижки» з розмітки.
+
+        Свідомо не використовується за замовчуванням: у цьому проєкті знижка
+        рахується від моди всієї історії, а не від того, що написав магазин.
+        """
+        return None
+
+    def extract_in_stock(self, product: dict, offer: dict) -> bool:
+        # schema.org: InStock / LimitedAvailability / PreOrder / OutOfStock / SoldOut
+        availability = str(offer.get("availability") or "").rsplit("/", 1)[-1].lower()
+        if not availability:
+            return True
+        return availability not in {"outofstock", "soldout", "discontinued"}
+
+    def extract_name(self, product: dict) -> str:
+        return clean_text(str(product.get("name") or ""))
+
+    def extract_image(self, product: dict) -> str | None:
+        image = product.get("image")
+        if isinstance(image, list):
+            image = image[0] if image else None
+        if isinstance(image, dict):
+            image = image.get("url")
+        return absolute_url(self.base_url, str(image)) or None if image else None
+
+    def extract_category(self, product: dict) -> str | None:
+        category = product.get("category")
+        return clean_text(str(category)) or None if category else None
+
+    def extract_external_id(self, product: dict, url: str) -> str | None:
+        """Артикул: sku/mpn з розмітки, інакше — хвіст адреси товару."""
+        for key in ("sku", "mpn", "productID"):
+            value = clean_text(str(product.get(key) or ""))
+            if value:
+                return value
+        tail = url.rstrip("/").rsplit("/", 1)[-1]
+        return tail or None
+
+    def canonical_url(self, product: dict, url: str) -> str:
+        """Адреса, під якою товар лягає в базу — без рекламних міток."""
+        if self.prefer_canonical_url:
+            declared = clean_text(str(product.get("url") or ""))
+            if declared:
+                return strip_tracking_params(absolute_url(self.base_url, declared))
+        return strip_tracking_params(url)
+
+    # -------------------------------------------------------------- складання
+
+    def parse_product_page(self, html: str, url: str) -> ParsedProduct | None:
+        product = self.find_product(self.soup(html))
+        if product is None:
+            self.report_error(f"Немає розмітки Product у ld+json: {url}")
+            return None
+
+        offer = self.first_offer(product)
+        price = self.extract_price(product, offer)
+        if price is None:
+            self.report_error(f"Не знайдено ціну: {url}")
+            return None
+
+        name = self.extract_name(product)
+        if not name:
+            self.report_error(f"Не знайдено назву: {url}")
+            return None
+
+        final_url = self.canonical_url(product, url)
+        return ParsedProduct(
+            name=name,
+            url=final_url,
+            price=price,
+            old_price=self.extract_old_price(product, offer),
+            currency=str(offer.get("priceCurrency") or self.currency),
+            in_stock=self.extract_in_stock(product, offer),
+            external_id=self.extract_external_id(product, final_url),
+            image_url=self.extract_image(product),
+            category=self.extract_category(product),
+        )
+
+    # ----------------------------------------------------------------- обхід
+
+    async def collect(self) -> AsyncIterator[ParsedProduct]:
+        for url in self.product_urls:
+            try:
+                html = await self.fetch(url)
+            except Exception as exc:  # noqa: BLE001 — один недоступний товар не валить решту
+                self.report_error(f"Сторінка {url}: {exc}")
+                continue
+
+            item = self.parse_product_page(html, url)
+            if item is not None:
+                yield item
