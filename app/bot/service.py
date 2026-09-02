@@ -10,12 +10,14 @@ from __future__ import annotations
 import logging
 
 from dataclasses import dataclass
+from decimal import Decimal
 from html import escape
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot import texts
 from app.bot.texts import welcome
+from app.core.discount import DiscountRules, price_mode
 from app.parsers import resolve
 from app.parsers.models import ParseResult
 from app.parsers.throttle import DelayPolicy
@@ -145,3 +147,75 @@ async def _fetch_single(parser_class, url: str) -> ParseResult:
     parser = parser_class(product_urls=[url], delay=DelayPolicy(min_delay=0, max_delay=0))
     async with parser:
         return await parser.run()
+
+
+@dataclass(frozen=True, slots=True)
+class WatchedItem:
+    """Рядок списку «за чим я стежу»."""
+
+    product_id: int
+    name: str
+    url: str
+    shop: str
+    price: Decimal | None
+    currency: str
+    in_stock: bool
+    usual_price: Decimal | None      # звична ціна, коли замірів уже досить
+    samples: int
+
+
+async def list_watched(session: AsyncSession, *, telegram_id: int) -> list[WatchedItem]:
+    """Товари, за якими стежить ця людина.
+
+    Звичну ціну показуємо лише тоді, коли замірів достатньо: на трьох днях
+    вона була б вигадкою, а людина сприйняла б її як обіцянку.
+    """
+    user = await repo.get_user_by_telegram_id(session, telegram_id)
+    if user is None:
+        return []
+
+    rules = DiscountRules.from_settings()
+    items: list[WatchedItem] = []
+    for subscription in await repo.list_subscriptions(session, user.id):
+        product = subscription.product
+        prices = product.prices                      # найновіша перша
+        last = prices[0] if prices else None
+        history = [price.price for price in reversed(prices)]
+        mode = price_mode(history, bucket_percent=rules.bucket_percent) if history else None
+
+        items.append(
+            WatchedItem(
+                product_id=product.id,
+                name=product.name,
+                url=product.url,
+                shop=product.shop.title if product.shop else "",
+                price=last.price if last else None,
+                currency=last.currency if last else "UAH",
+                in_stock=bool(last.in_stock) if last else True,
+                usual_price=mode.value if mode and mode.samples >= rules.min_samples else None,
+                samples=len(history),
+            )
+        )
+    return items
+
+
+async def remove_watched(
+    session: AsyncSession, *, telegram_id: int, product_id: int
+) -> str | None:
+    """Прибирає товар зі списку людини. Повертає назву або None.
+
+    Товар із бази не видаляється: за ним можуть стежити інші, а історія цін
+    спільна й цінна сама собою.
+    """
+    user = await repo.get_user_by_telegram_id(session, telegram_id)
+    if user is None:
+        return None
+
+    subscription = await repo.get_subscription(session, user.id, product_id)
+    if subscription is None:
+        return None
+
+    name = subscription.product.name if subscription.product else ""
+    await repo.unsubscribe(session, user_id=user.id, product_id=product_id)
+    logger.info("Користувач %s прибрав товар %s зі списку", telegram_id, product_id)
+    return name

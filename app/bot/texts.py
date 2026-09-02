@@ -6,9 +6,12 @@
 
 from __future__ import annotations
 
+from html import escape
+
 BOT_COMMANDS: dict[str, str] = {
     "start": "почати роботу",
     "help": "що вміє бот",
+    "list": "мій список товарів",
     "stop": "припинити сповіщення",
 }
 
@@ -35,6 +38,7 @@ def help_text() -> str:
         "• коли ціна впаде помітно нижче звичної — напишу.\n\n"
         "Про одну знижку кажу один раз, а не щодня, доки вона триває.\n\n"
         "Команди:\n"
+        "/list — за чим я стежу зараз\n"
         "/help — це повідомлення\n"
         "/stop — припинити сповіщення (список лишиться)"
     )
@@ -104,3 +108,42 @@ def already_watching(name: str, price: str, currency: str) -> str:
         f"За цим товаром я вже стежу:\n<b>{name}</b>\n\n"
         f"Ціна зараз: <b>{price} {currency}</b>"
     )
+
+
+# --------------------------------------------------------------- мій список
+
+
+def empty_list() -> str:
+    return (
+        "Список порожній.\n\n"
+        "Надішли посилання на товар — почну стежити за його ціною."
+    )
+
+
+def watch_list(items: list) -> str:
+    """Пронумерований список товарів: номери збігаються з кнопками під ним."""
+    рядки = ["<b>За чим я стежу</b>", ""]
+    for номер, item in enumerate(items, start=1):
+        ціна = f"{item.price:.2f} {item.currency}" if item.price is not None else "ціни ще немає"
+        # назва й адреса йдуть у розмітку — амперсанд у них зламав би повідомлення
+        назва = escape(item.name[:70])
+        адреса = escape(item.url, quote=True)
+        рядок = f"{номер}. <a href=\"{адреса}\">{назва}</a>\n   {ціна}"
+        if item.usual_price is not None:
+            рядок += f" · звично {item.usual_price:.2f}"
+        else:
+            рядок += f" · замірів {item.samples}, звичну ще рахую"
+        if not item.in_stock:
+            рядок += "\n   немає в наявності"
+        рядки.append(рядок)
+    рядки.append("")
+    рядки.append("Кнопки нижче прибирають товар зі списку.")
+    return "\n".join(рядки)
+
+
+def removed(name: str) -> str:
+    return f"Прибрав зі списку: {escape(name[:70])}"
+
+
+def remove_failed() -> str:
+    return "Цього товару у твоєму списку вже немає."

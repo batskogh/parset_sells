@@ -9,6 +9,7 @@ Telegram тут не потрібен: хендлери тонкі, а вся р
 from __future__ import annotations
 
 import asyncio
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
@@ -183,7 +184,7 @@ def test_тексти_пояснюють_головне() -> None:
 
 
 def test_команди_описані() -> None:
-    assert set(BOT_COMMANDS) == {"start", "help", "stop"}
+    assert set(BOT_COMMANDS) == {"start", "help", "list", "stop"}
     assert all(опис and опис[0].islower() for опис in BOT_COMMANDS.values())
     assert "лишається" in stopped()      # список товарів не зникає
 
@@ -364,3 +365,161 @@ def test_назва_товару_екранується(session_factory, без_
     result = додати(session_factory, "https://citrus.ua/p/x.html")
     assert "&lt;b&gt;" in result.text
     assert "&amp;" in result.text
+
+
+# ------------------------------------------------------------- мій список
+
+
+def список(factory, *, telegram_id: int = 5_093_284_241):
+    async def _list():
+        async with factory() as session:
+            return await service.list_watched(session, telegram_id=telegram_id)
+
+    return asyncio.run(_list())
+
+
+def прибрати(factory, product_id: int, *, telegram_id: int = 5_093_284_241):
+    async def _remove():
+        async with factory() as session:
+            name = await service.remove_watched(
+                session, telegram_id=telegram_id, product_id=product_id
+            )
+            await session.commit()
+            return name
+
+    return asyncio.run(_remove())
+
+
+def test_список_порожній_у_новачка(session_factory) -> None:
+    assert список(session_factory) == []
+
+
+def test_список_показує_додані_товари(session_factory, без_мережі) -> None:
+    без_мережі["items"] = [
+        {"name": "Чипси Люкс", "price": "74.00", "url": "https://maudau.com.ua/p/1"}
+    ]
+    додати(session_factory, "https://maudau.com.ua/p/1")
+
+    items = список(session_factory)
+    assert len(items) == 1
+    assert items[0].name == "Чипси Люкс"
+    assert items[0].price == Decimal("74.00")
+    assert items[0].in_stock is True
+
+
+def test_звичну_ціну_не_показуємо_поки_замірів_мало(session_factory, без_мережі) -> None:
+    """На двох замірах «звична ціна» була б вигадкою."""
+    без_мережі["items"] = [
+        {"name": "Чипси", "price": "74.00", "url": "https://maudau.com.ua/p/1"}
+    ]
+    додати(session_factory, "https://maudau.com.ua/p/1")
+
+    item = список(session_factory)[0]
+    assert item.usual_price is None
+    assert item.samples == 1
+
+
+def test_звична_ціна_зявляється_коли_історії_досить(session_factory, без_мережі) -> None:
+    без_мережі["items"] = [
+        {"name": "Чипси", "price": "80.00", "url": "https://maudau.com.ua/p/1"}
+    ]
+    result = додати(session_factory, "https://maudau.com.ua/p/1")
+
+    async def _add_history():
+        from datetime import datetime, timedelta, timezone
+
+        from app.db.models import Price
+
+        async with session_factory() as session:
+            now = datetime.now(timezone.utc)
+            for i in range(5):
+                session.add(
+                    Price(
+                        product_id=result.product_id,
+                        price=Decimal("80.00"),
+                        currency="UAH",
+                        parsed_at=now - timedelta(days=5 - i),
+                    )
+                )
+            await session.commit()
+
+    asyncio.run(_add_history())
+
+    item = список(session_factory)[0]
+    assert item.usual_price == Decimal("80.00")
+    assert item.samples >= 5
+
+
+def test_видалення_прибирає_товар_зі_списку(session_factory, без_мережі) -> None:
+    без_мережі["items"] = [
+        {"name": "Чипси", "price": "74.00", "url": "https://maudau.com.ua/p/1"}
+    ]
+    result = додати(session_factory, "https://maudau.com.ua/p/1")
+
+    assert прибрати(session_factory, result.product_id) == "Чипси"
+    assert список(session_factory) == []
+
+
+def test_чужий_товар_прибрати_не_можна(session_factory, без_мережі) -> None:
+    """Кнопка з чужим id не має видаляти чужу підписку."""
+    без_мережі["items"] = [
+        {"name": "Чипси", "price": "74.00", "url": "https://maudau.com.ua/p/1"}
+    ]
+    result = додати(session_factory, "https://maudau.com.ua/p/1", telegram_id=111)
+    додати(session_factory, "https://maudau.com.ua/p/1", telegram_id=222)
+
+    # 222 намагається прибрати товар, вказавши той самий id — прибереться лише його підписка
+    assert прибрати(session_factory, result.product_id, telegram_id=222) == "Чипси"
+    assert список(session_factory, telegram_id=111) != []
+    assert список(session_factory, telegram_id=222) == []
+
+
+def test_видалення_не_чіпає_сам_товар_і_історію(session_factory, без_мережі) -> None:
+    """Товар спільний, історія цін цінна — прибирається лише підписка."""
+    без_мережі["items"] = [
+        {"name": "Чипси", "price": "74.00", "url": "https://maudau.com.ua/p/1"}
+    ]
+    result = додати(session_factory, "https://maudau.com.ua/p/1")
+    прибрати(session_factory, result.product_id)
+
+    async def _counts():
+        from app.db.models import Price, Product
+
+        async with session_factory() as session:
+            products = (await session.execute(select(Product))).scalars().all()
+            prices = (await session.execute(select(Price))).scalars().all()
+            return len(products), len(prices)
+
+    assert asyncio.run(_counts()) == (1, 1)
+
+
+def test_видалення_неіснуючого(session_factory) -> None:
+    assert прибрати(session_factory, 999) is None
+
+
+# --------------------------------------------------------------- клавіатура
+
+
+def test_кнопки_відповідають_рядкам_списку() -> None:
+    from app.bot.keyboards import parse_remove_callback, watch_list_keyboard
+    from app.bot.service import WatchedItem
+
+    items = [
+        WatchedItem(і, f"Товар {і}", "https://x.ua", "Ш", Decimal("10"), "UAH", True, None, 1)
+        for і in (11, 22, 33, 44, 55)
+    ]
+    keyboard = watch_list_keyboard(items)
+
+    кнопки = [b for row in keyboard.inline_keyboard for b in row]
+    assert [b.text for b in кнопки] == ["✕ 1", "✕ 2", "✕ 3", "✕ 4", "✕ 5"]
+    assert [parse_remove_callback(b.callback_data) for b in кнопки] == [11, 22, 33, 44, 55]
+    assert len(keyboard.inline_keyboard) == 2      # 4 в рядку, далі перенос
+
+
+def test_чужий_callback_ігнорується() -> None:
+    from app.bot.keyboards import parse_remove_callback
+
+    assert parse_remove_callback(None) is None
+    assert parse_remove_callback("щось інше") is None
+    assert parse_remove_callback("rm:не_число") is None
+    assert parse_remove_callback("rm:42") == 42

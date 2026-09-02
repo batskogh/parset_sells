@@ -11,10 +11,19 @@ import logging
 
 from aiogram import F, Router
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 
 from app.bot import service
-from app.bot.texts import help_text, not_a_link, stopped
+from app.bot.keyboards import REMOVE_PREFIX, parse_remove_callback, watch_list_keyboard
+from app.bot.texts import (
+    empty_list,
+    help_text,
+    not_a_link,
+    remove_failed,
+    removed,
+    stopped,
+    watch_list,
+)
 from app.db.base import session_scope
 from app.parsers.resolve import extract_url
 
@@ -75,3 +84,50 @@ async def handle_text(message: Message) -> None:
             message_text=message.text,
         )
     await message.answer(result.text, disable_web_page_preview=True)
+
+
+@router.message(Command("list"))
+async def handle_list(message: Message) -> None:
+    if message.from_user is None:
+        return
+
+    async with session_scope() as session:
+        items = await service.list_watched(session, telegram_id=message.from_user.id)
+
+    if not items:
+        await message.answer(empty_list())
+        return
+
+    await message.answer(
+        watch_list(items),
+        reply_markup=watch_list_keyboard(items),
+        disable_web_page_preview=True,
+    )
+
+
+@router.callback_query(F.data.startswith(f"{REMOVE_PREFIX}:"))
+async def handle_remove(callback: CallbackQuery) -> None:
+    """Натиснута кнопка «прибрати» під списком."""
+    product_id = parse_remove_callback(callback.data)
+    if product_id is None or callback.from_user is None:
+        await callback.answer()
+        return
+
+    async with session_scope() as session:
+        name = await service.remove_watched(
+            session, telegram_id=callback.from_user.id, product_id=product_id
+        )
+        items = await service.list_watched(session, telegram_id=callback.from_user.id)
+
+    await callback.answer(removed(name) if name else remove_failed())
+
+    if isinstance(callback.message, Message):
+        # перемальовуємо список, щоб номери кнопок далі збігалися з рядками
+        if items:
+            await callback.message.edit_text(
+                watch_list(items),
+                reply_markup=watch_list_keyboard(items),
+                disable_web_page_preview=True,
+            )
+        else:
+            await callback.message.edit_text(empty_list())

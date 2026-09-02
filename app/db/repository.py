@@ -11,7 +11,7 @@ from decimal import Decimal
 
 from sqlalchemy import Select, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.db.models import (
     Notification,
@@ -416,9 +416,18 @@ async def subscribe(
 async def list_subscriptions(
     session: AsyncSession, user_id: int, *, limit: int = 100
 ) -> list[Subscription]:
+    """Підписки разом із товарами, їхніми цінами й магазином.
+
+    Усе підвантажується одразу: в асинхронній сесії дотягнути зв'язок пізніше
+    не можна — SQLAlchemy кине MissingGreenlet замість тихого запиту.
+    """
     stmt = (
         select(Subscription)
         .where(Subscription.user_id == user_id)
+        .options(
+            selectinload(Subscription.product).selectinload(Product.prices),
+            selectinload(Subscription.product).joinedload(Product.shop),
+        )
         .order_by(Subscription.created_at.desc())
         .limit(limit)
     )
