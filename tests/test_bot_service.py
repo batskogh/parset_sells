@@ -186,3 +186,181 @@ def test_команди_описані() -> None:
     assert set(BOT_COMMANDS) == {"start", "help", "stop"}
     assert all(опис and опис[0].islower() for опис in BOT_COMMANDS.values())
     assert "лишається" in stopped()      # список товарів не зникає
+
+
+# ------------------------------------------------- додавання товару за посиланням
+
+
+@pytest.fixture
+def без_мережі(monkeypatch):
+    """Підміна походу на сайт: тести не мають залежати від живих магазинів."""
+    from decimal import Decimal
+
+    from app.parsers.models import ParsedProduct, ParseResult
+
+    стан = {"items": [], "errors": []}
+
+    async def fake_fetch(parser_class, url):
+        result = ParseResult(shop_slug=parser_class.name)
+        result.errors = list(стан["errors"])
+        for дані in стан["items"]:
+            result.items.append(
+                ParsedProduct(
+                    name=дані.get("name", "Товар"),
+                    url=дані.get("url", url),
+                    price=Decimal(str(дані.get("price", "100"))),
+                    currency=дані.get("currency", "UAH"),
+                    in_stock=дані.get("in_stock", True),
+                    external_id=дані.get("external_id"),
+                )
+            )
+        return result
+
+    monkeypatch.setattr(service, "_fetch_single", fake_fetch)
+    return стан
+
+
+def додати(factory, текст: str, *, telegram_id: int = 5_093_284_241):
+    async def _add():
+        async with factory() as session:
+            result = await service.add_product_by_url(
+                session, telegram_id=telegram_id, chat_id=telegram_id, message_text=текст
+            )
+            await session.commit()
+            return result
+
+    return asyncio.run(_add())
+
+
+def test_повідомлення_без_посилання(session_factory, без_мережі) -> None:
+    result = додати(session_factory, "привіт, як справи?")
+    assert result.ok is False
+    assert "Не бачу посилання" in result.text
+
+
+def test_невідомий_магазин_дістає_перелік(session_factory, без_мережі) -> None:
+    result = додати(session_factory, "https://hard.rozetka.com.ua/ua/x/p1/")
+    assert result.ok is False
+    assert "поки не вмію" in result.text
+    assert "maudau.com.ua" in result.text        # перелік того, що вміє
+
+
+def test_вимкнений_магазин_пояснює_причину(session_factory, без_мережі) -> None:
+    """Магазин відомий, але за антибот-захистом — це інша відмова, ніж «не знаю»."""
+    result = додати(session_factory, "https://www.staff-clothes.com/product/9en0116/")
+    assert result.ok is False
+    assert "антибот" in result.text
+
+
+def test_каталожний_магазин(session_factory, без_мережі) -> None:
+    result = додати(session_factory, "https://books.toscrape.com/catalogue/page-1.html")
+    assert result.ok is False
+    assert "каталогом" in result.text
+
+
+def test_сторінка_без_ціни(session_factory, без_мережі) -> None:
+    без_мережі["errors"] = ["Немає розмітки Product у ld+json: https://citrus.ua/about/"]
+    result = додати(session_factory, "https://citrus.ua/about/")
+    assert result.ok is False
+    assert "Не вдалося прочитати ціну" in result.text
+    assert "ld+json" in result.text              # причина, а не самі вибачення
+
+
+def test_товар_додається_і_підписка_створюється(session_factory, без_мережі) -> None:
+
+    без_мережі["items"] = [
+        {"name": "Чипси Люкс", "price": "74.00", "url": "https://maudau.com.ua/product/chipsy-872080"}
+    ]
+    result = додати(session_factory, "https://maudau.com.ua/product/chipsy-872080")
+
+    assert result.ok is True
+    assert "Стежу за товаром" in result.text
+    assert "74.00 UAH" in result.text
+
+    async def _counts():
+        from app.db.models import Product, Subscription
+
+        async with session_factory() as session:
+            products = (await session.execute(select(Product))).scalars().all()
+            subs = (await session.execute(select(Subscription))).unique().scalars().all()
+            return len(products), len(subs)
+
+    assert asyncio.run(_counts()) == (1, 1)
+
+
+def test_повторне_посилання_не_плодить_дублікатів(session_factory, без_мережі) -> None:
+    без_мережі["items"] = [
+        {"name": "Чипси Люкс", "price": "74.00", "url": "https://maudau.com.ua/product/chipsy-872080"}
+    ]
+    додати(session_factory, "https://maudau.com.ua/product/chipsy-872080")
+    result = додати(session_factory, "https://maudau.com.ua/product/chipsy-872080")
+
+    assert result.ok is True
+    assert "вже стежу" in result.text
+
+    async def _counts():
+        from app.db.models import Product, Subscription
+
+        async with session_factory() as session:
+            products = (await session.execute(select(Product))).scalars().all()
+            subs = (await session.execute(select(Subscription))).unique().scalars().all()
+            return len(products), len(subs)
+
+    assert asyncio.run(_counts()) == (1, 1)
+
+
+def test_двоє_людей_на_один_товар_дають_один_товар(session_factory, без_мережі) -> None:
+    """Товар спільний, підписки різні — саме так задумана схема."""
+    без_мережі["items"] = [
+        {"name": "Чипси Люкс", "price": "74.00", "url": "https://maudau.com.ua/product/chipsy-872080"}
+    ]
+    додати(session_factory, "https://maudau.com.ua/product/chipsy-872080", telegram_id=111)
+    додати(session_factory, "https://maudau.com.ua/product/chipsy-872080", telegram_id=222)
+
+    async def _counts():
+        from app.db.models import Product, Subscription
+
+        async with session_factory() as session:
+            products = (await session.execute(select(Product))).scalars().all()
+            subs = (await session.execute(select(Subscription))).unique().scalars().all()
+            return len(products), len(subs)
+
+    assert asyncio.run(_counts()) == (1, 2)
+
+
+def test_рекламний_хвіст_не_створює_другий_товар(session_factory, без_мережі) -> None:
+    """Те саме посилання з реклами й із сайту — один товар, не два."""
+    чистий = "https://maudau.com.ua/product/chipsy-872080"
+    без_мережі["items"] = [{"name": "Чипси Люкс", "price": "74.00", "url": чистий}]
+
+    додати(session_factory, чистий)
+    додати(session_factory, f"{чистий}?utm_source=telegram&gclid=ABC")
+
+    async def _count_products():
+        from app.db.models import Product
+
+        async with session_factory() as session:
+            return len((await session.execute(select(Product))).scalars().all())
+
+    assert asyncio.run(_count_products()) == 1
+
+
+def test_товару_немає_в_наявності_про_це_кажуть(session_factory, без_мережі) -> None:
+    без_мережі["items"] = [
+        {"name": "Відеокарта", "price": "39199.00", "in_stock": False,
+         "url": "https://citrus.ua/videokarti/x.html"}
+    ]
+    result = додати(session_factory, "https://citrus.ua/videokarti/x.html")
+    assert result.ok is True
+    assert "немає в наявності" in result.text
+
+
+def test_назва_товару_екранується(session_factory, без_мережі) -> None:
+    """Відповідь іде з розміткою HTML — кутові дужки в назві її зламали б."""
+    без_мережі["items"] = [
+        {"name": 'Товар <b>жирний</b> & "лапки"', "price": "10.00",
+         "url": "https://citrus.ua/p/x.html"}
+    ]
+    result = додати(session_factory, "https://citrus.ua/p/x.html")
+    assert "&lt;b&gt;" in result.text
+    assert "&amp;" in result.text

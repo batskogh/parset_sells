@@ -13,7 +13,15 @@ from sqlalchemy import Select, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import Notification, Price, Product, Shop, TelegramUser, utcnow
+from app.db.models import (
+    Notification,
+    Price,
+    Product,
+    Shop,
+    Subscription,
+    TelegramUser,
+    utcnow,
+)
 
 # ---------------------------------------------------------------- магазини
 
@@ -370,3 +378,86 @@ async def deactivate_user(session: AsyncSession, telegram_id: int) -> bool:
     user.is_active = False
     await session.flush()
     return True
+
+
+# ------------------------------------------------------------------ підписки
+
+
+async def get_subscription(
+    session: AsyncSession, user_id: int, product_id: int
+) -> Subscription | None:
+    stmt = select(Subscription).where(
+        Subscription.user_id == user_id, Subscription.product_id == product_id
+    )
+    return (await session.execute(stmt)).scalars().first()
+
+
+async def subscribe(
+    session: AsyncSession, *, user_id: int, product_id: int
+) -> tuple[Subscription, bool]:
+    """Підписує людину на товар. Повертає (підписка, чи нова).
+
+    Повторна підписка не помилка: людина могла надіслати те саме посилання
+    вдруге, і правильна реакція — сказати, що вже стежимо, а не лаятись.
+    """
+    existing = await get_subscription(session, user_id, product_id)
+    if existing is not None:
+        was_muted = existing.is_muted
+        existing.is_muted = False
+        await session.flush()
+        return existing, was_muted
+
+    subscription = Subscription(user_id=user_id, product_id=product_id)
+    session.add(subscription)
+    await session.flush()
+    return subscription, True
+
+
+async def list_subscriptions(
+    session: AsyncSession, user_id: int, *, limit: int = 100
+) -> list[Subscription]:
+    stmt = (
+        select(Subscription)
+        .where(Subscription.user_id == user_id)
+        .order_by(Subscription.created_at.desc())
+        .limit(limit)
+    )
+    return list((await session.execute(stmt)).unique().scalars().all())
+
+
+async def unsubscribe(session: AsyncSession, *, user_id: int, product_id: int) -> bool:
+    result = await session.execute(
+        delete(Subscription).where(
+            Subscription.user_id == user_id, Subscription.product_id == product_id
+        )
+    )
+    return bool(result.rowcount)
+
+
+async def subscribers_of(session: AsyncSession, product_id: int) -> list[TelegramUser]:
+    """Кому слати про цей товар: активні й не приглушені."""
+    stmt = (
+        select(TelegramUser)
+        .join(Subscription, Subscription.user_id == TelegramUser.id)
+        .where(
+            Subscription.product_id == product_id,
+            Subscription.is_muted.is_(False),
+            TelegramUser.is_active.is_(True),
+        )
+    )
+    return list((await session.execute(stmt)).unique().scalars().all())
+
+
+async def product_urls_for_shop(session: AsyncSession, slug: str) -> list[str]:
+    """Адреси активних товарів магазину — те, за чим сьогодні треба стежити.
+
+    Саме цим список для парсера відрізняється від зашитого в код: товари
+    приходять від людей через бота, і завтра їх буде більше, ніж учора.
+    """
+    stmt = (
+        select(Product.url)
+        .join(Shop, Shop.id == Product.shop_id)
+        .where(Shop.slug == slug, Product.is_active.is_(True))
+        .order_by(Product.id)
+    )
+    return list((await session.execute(stmt)).scalars().all())

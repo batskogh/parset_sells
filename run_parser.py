@@ -16,8 +16,10 @@ import sys
 
 from app.config import get_settings
 from app.core.runner import ParserRunner
-from app.db.base import dispose_db, init_db
+from app.db import repository as repo
+from app.db.base import dispose_db, init_db, session_scope
 from app.parsers.registry import all_parsers, get_parser
+from app.parsers.resolve import supports_single_product
 from app.parsers.throttle import DelayPolicy
 
 
@@ -42,8 +44,37 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--concurrency", type=int, default=None, help="скільки сайтів паралельно")
     parser.add_argument("--min-delay", type=float, default=None, help="мін. пауза між запитами, с")
     parser.add_argument("--max-delay", type=float, default=None, help="макс. пауза між запитами, с")
+    parser.add_argument(
+        "--from-code",
+        action="store_true",
+        help="брати адреси зі списку в коді парсера, а не з бази",
+    )
     parser.add_argument("--log-level", default=None, help="DEBUG/INFO/WARNING")
     return parser
+
+
+async def build_parser(cls, *, delay, limit, from_db: bool):
+    """Готує парсер до прогону, підставивши адреси товарів із бази.
+
+    Товари приходять від людей через бота, тож список у коді парсера — лише
+    заготовка для ручного прогону. Щойно в базі з'явились товари цього
+    магазину, стежимо саме за ними. Каталожних парсерів це не стосується:
+    вони ходять по списках, а не по окремих сторінках.
+    """
+    kwargs = {"delay": delay, "max_items": limit}
+    if not from_db or not supports_single_product(cls):
+        return cls(**kwargs)
+
+    async with session_scope() as session:
+        urls = await repo.product_urls_for_shop(session, cls.name)
+
+    logger = logging.getLogger("parser.targets")
+    if not urls:
+        logger.info("%s: у базі товарів немає — беру список із коду парсера", cls.name)
+        return cls(**kwargs)
+
+    logger.info("%s: стежу за %s товар(ами) з бази", cls.name, len(urls))
+    return cls(product_urls=urls, **kwargs)
 
 
 def print_parsers() -> None:
@@ -74,10 +105,11 @@ async def main_async(args: argparse.Namespace) -> int:
         max_delay = args.max_delay if args.max_delay is not None else settings.default_max_delay
         delay_override = DelayPolicy(min_delay=min_delay, max_delay=max_delay)
 
-    parsers = [cls(delay=delay_override, max_items=args.limit) for cls in classes]
-
-    if not args.dry_run:
-        await init_db()
+    await init_db()
+    parsers = [
+        await build_parser(cls, delay=delay_override, limit=args.limit, from_db=not args.from_code)
+        for cls in classes
+    ]
 
     runner = ParserRunner(
         parsers,
