@@ -13,7 +13,7 @@ from sqlalchemy import Select, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import Price, Product, Shop, utcnow
+from app.db.models import Notification, Price, Product, Shop, utcnow
 
 # ---------------------------------------------------------------- магазини
 
@@ -266,3 +266,53 @@ async def list_prices(
 async def delete_price(session: AsyncSession, price_id: int) -> bool:
     result = await session.execute(delete(Price).where(Price.id == price_id))
     return bool(result.rowcount)
+
+
+# ------------------------------------------------------------ сповіщення
+
+
+async def get_last_notification(
+    session: AsyncSession, user_id: int, product_id: int
+) -> Notification | None:
+    """Останнє, що казали цій людині про цей товар."""
+    stmt = (
+        select(Notification)
+        .where(Notification.user_id == user_id, Notification.product_id == product_id)
+        .order_by(Notification.sent_at.desc(), Notification.id.desc())
+        .limit(1)
+    )
+    return (await session.execute(stmt)).scalars().first()
+
+
+async def add_notification(
+    session: AsyncSession,
+    *,
+    user_id: int,
+    product_id: int,
+    price: Decimal,
+    mode_price: Decimal,
+    drop_percent: Decimal,
+    sent_at: datetime | None = None,
+) -> Notification:
+    """Записує факт відправки — саме за цим журналом працює дедуплікація."""
+    notification = Notification(
+        user_id=user_id,
+        product_id=product_id,
+        price=price,
+        mode_price=mode_price,
+        drop_percent=drop_percent,
+    )
+    if sent_at is not None:
+        notification.sent_at = sent_at
+    session.add(notification)
+    await session.flush()
+    return notification
+
+
+async def list_notifications(
+    session: AsyncSession, *, user_id: int | None = None, limit: int = 50
+) -> list[Notification]:
+    stmt = select(Notification).order_by(Notification.sent_at.desc()).limit(limit)
+    if user_id is not None:
+        stmt = stmt.where(Notification.user_id == user_id)
+    return list((await session.execute(stmt)).scalars().all())

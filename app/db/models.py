@@ -177,3 +177,41 @@ class Subscription(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Subscription user={self.user_id} product={self.product_id}>"
+
+
+class Notification(Base):
+    """Журнал надісланих сповіщень: кому, про що і за якою ціною.
+
+    Потрібен не для звітності, а щоб не турбувати людину двічі тим самим.
+    Знижка триває днями, а перевірка йде щодня — без журналу одне падіння
+    ціни перетворилось би на щоденне нагадування, і бота б вимкнули.
+
+    Зберігаємо не лише ціну, а й моду на момент відправки: поріг рахувався
+    саме від неї, і без цього неможливо зрозуміти, чому сповіщення пішло.
+    """
+
+    __tablename__ = "notifications"
+    __table_args__ = (
+        Index("ix_notification_user_product_time", "user_id", "product_id", "sent_at"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("telegram_users.id", ondelete="CASCADE"), index=True
+    )
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), index=True
+    )
+    # ціна, про яку сповістили, і звична ціна на той момент
+    price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    mode_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    drop_percent: Mapped[Decimal] = mapped_column(Numeric(5, 2))
+    sent_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+
+    user: Mapped["TelegramUser"] = relationship()
+    product: Mapped["Product"] = relationship()
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<Notification user={self.user_id} product={self.product_id} {self.price}>"

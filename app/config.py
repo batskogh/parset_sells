@@ -72,6 +72,8 @@ class Settings:
     discount_min_drop_percent: float
     discount_min_samples: int
     discount_bucket_percent: float
+    notify_cooldown_hours: int
+    notify_deeper_percent: float
 
     @property
     def db_url(self) -> str:
@@ -109,4 +111,6 @@ def get_settings() -> Settings:
         discount_min_drop_percent=_get_float("DISCOUNT_MIN_DROP_PERCENT", 10.0),
         discount_min_samples=_get_int("DISCOUNT_MIN_SAMPLES", 5),
         discount_bucket_percent=_get_float("DISCOUNT_BUCKET_PERCENT", 1.0),
+        notify_cooldown_hours=_get_int("NOTIFY_COOLDOWN_HOURS", 24),
+        notify_deeper_percent=_get_float("NOTIFY_DEEPER_PERCENT", 10.0),
     )

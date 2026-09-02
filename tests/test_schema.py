@@ -11,7 +11,7 @@ Telegram не обрізається.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import create_engine, event, inspect, select
@@ -202,3 +202,103 @@ def test_власний_поріг_підписки(session: Session) -> None:
     subscription = session.scalars(select(Subscription)).one()
     assert subscription.min_drop_percent == 25
     assert subscription.is_muted is False
+
+
+# ------------------------------------------------------------ журнал сповіщень
+
+
+def test_журнал_зберігає_чому_сповістили(session: Session) -> None:
+    """Не лише ціну, а й моду: інакше не зрозуміти, звідки взявся відсоток."""
+    from decimal import Decimal
+
+    from app.db.models import Notification
+
+    product = зробити_товар(session)
+    user = зробити_людину(session, telegram_id=777)
+    session.add(
+        Notification(
+            user_id=user.id,
+            product_id=product.id,
+            price=Decimal("80"),
+            mode_price=Decimal("100"),
+            drop_percent=Decimal("20"),
+            sent_at=datetime.now(timezone.utc),
+        )
+    )
+    session.commit()
+
+    saved = session.scalars(select(Notification)).one()
+    assert saved.price == Decimal("80")
+    assert saved.mode_price == Decimal("100")
+    assert saved.drop_percent == Decimal("20")
+
+
+def test_видалення_людини_прибирає_і_журнал(session: Session) -> None:
+    from decimal import Decimal
+
+    from app.db.models import Notification
+
+    product = зробити_товар(session)
+    user = зробити_людину(session, telegram_id=888)
+    session.add(
+        Notification(
+            user_id=user.id,
+            product_id=product.id,
+            price=Decimal("80"),
+            mode_price=Decimal("100"),
+            drop_percent=Decimal("20"),
+        )
+    )
+    session.commit()
+
+    session.delete(user)
+    session.commit()
+    assert session.scalars(select(Notification)).all() == []
+
+
+def test_журнал_і_правило_разом_не_дають_повторів(session: Session) -> None:
+    """Наскрізна перевірка: записали відправку — наступного дня мовчимо.
+
+    Саме так це працюватиме в боті: детектор знайшов знижку, журнал сказав,
+    чи вже про неї говорили.
+    """
+    from decimal import Decimal
+
+    from app.core.notify_log import LastNotification, NotifyRules, should_notify
+    from app.db.models import Notification
+
+    product = зробити_товар(session)
+    user = зробити_людину(session, telegram_id=999)
+    rules = NotifyRules(cooldown_hours=24, deeper_by_percent=Decimal("10"))
+    now = datetime.now(timezone.utc)
+
+    # перший раз — журнал порожній, кажемо
+    перше = should_notify(
+        current=Decimal("80"), last=None, recovery_price=Decimal("90"), rules=rules, now=now
+    )
+    assert перше.send is True
+
+    session.add(
+        Notification(
+            user_id=user.id,
+            product_id=product.id,
+            price=Decimal("80"),
+            mode_price=Decimal("100"),
+            drop_percent=Decimal("20"),
+            sent_at=now,
+        )
+    )
+    session.commit()
+
+    # наступного дня ціна та сама — журнал каже мовчати
+    saved = session.scalars(select(Notification)).one()
+    друге = should_notify(
+        current=Decimal("80"),
+        last=LastNotification(price=saved.price, sent_at=saved.sent_at),
+        prices_since_last=[Decimal("80")],
+        recovery_price=Decimal("90"),
+        rules=rules,
+        now=now + timedelta(days=1),
+    )
+    assert друге.send is False
+    assert "вже казали" in друге.reason
