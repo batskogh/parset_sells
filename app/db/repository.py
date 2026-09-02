@@ -13,7 +13,7 @@ from sqlalchemy import Select, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import Notification, Price, Product, Shop, utcnow
+from app.db.models import Notification, Price, Product, Shop, TelegramUser, utcnow
 
 # ---------------------------------------------------------------- магазини
 
@@ -316,3 +316,57 @@ async def list_notifications(
     if user_id is not None:
         stmt = stmt.where(Notification.user_id == user_id)
     return list((await session.execute(stmt)).scalars().all())
+
+
+# ------------------------------------------------- користувачі телеграму
+
+
+async def get_user_by_telegram_id(
+    session: AsyncSession, telegram_id: int
+) -> TelegramUser | None:
+    stmt = select(TelegramUser).where(TelegramUser.telegram_id == telegram_id)
+    return (await session.execute(stmt)).scalars().first()
+
+
+async def get_or_create_user(
+    session: AsyncSession,
+    *,
+    telegram_id: int,
+    chat_id: int,
+    username: str | None = None,
+    first_name: str | None = None,
+) -> tuple[TelegramUser, bool]:
+    """Знаходить або заводить людину. Повертає (користувач, чи новий).
+
+    Ім'я та username оновлюються щоразу: людина могла їх змінити, а бот має
+    звертатись правильно. Повторний `/start` після «стоп» знову вмикає
+    сповіщення — це найочевидніший спосіб повернутись.
+    """
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if user is None:
+        user = TelegramUser(
+            telegram_id=telegram_id,
+            chat_id=chat_id,
+            username=username,
+            first_name=first_name,
+        )
+        session.add(user)
+        await session.flush()
+        return user, True
+
+    user.chat_id = chat_id
+    user.username = username
+    user.first_name = first_name
+    user.is_active = True
+    await session.flush()
+    return user, False
+
+
+async def deactivate_user(session: AsyncSession, telegram_id: int) -> bool:
+    """М'яке вимкнення: підписки лишаються, сповіщення припиняються."""
+    user = await get_user_by_telegram_id(session, telegram_id)
+    if user is None:
+        return False
+    user.is_active = False
+    await session.flush()
+    return True

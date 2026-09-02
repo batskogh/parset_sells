@@ -19,8 +19,12 @@ from app.db import models  # noqa: F401  — щоб моделі потрапи�
 
 config = context.config
 
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# Логування налаштовуємо лише коли alembic запущено з командного рядка.
+# Коли міграції ганяє сам застосунок (init_db), логування вже налаштоване —
+# а `alembic.ini` перевів би кореневий логер на WARN і зробив би застосунок
+# німим одразу після старту: саме так бот мовчки «зникав» після міграції.
+if config.config_file_name is not None and config.attributes.get("configure_logging", True):
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

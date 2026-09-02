@@ -38,6 +38,9 @@ LEGACY_TABLE = "prices"
 def alembic_config() -> Config:
     config = Config(str(BASE_DIR / "alembic.ini"))
     config.set_main_option("script_location", str(BASE_DIR / "migrations"))
+    # логування вже налаштоване застосунком; хай alembic його не чіпає,
+    # інакше після міграції все, що пишеться в лог, зникає
+    config.attributes["configure_logging"] = False
     return config
 
 

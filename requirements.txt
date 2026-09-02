@@ -9,6 +9,7 @@ jinja2>=3.1
 python-multipart>=0.0.20
 
 alembic>=1.14
+aiogram>=3.15
 
 # тести
 pytest>=8.3
