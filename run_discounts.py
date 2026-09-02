@@ -19,7 +19,13 @@ from decimal import Decimal
 
 from app.config import get_settings
 from app.core.discount import DiscountRules, price_mode
-from app.core.discount_scan import MAX_PRODUCTS, scan_products
+from app.core.aggregate import (
+    assortment_report,
+    basket_discount,
+    group_reports,
+    shop_index,
+)
+from app.core.discount_scan import MAX_PRODUCTS, load_histories, scan_products
 from app.db import repository as repo
 from app.db.base import dispose_db, session_scope
 
@@ -39,6 +45,31 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--modes",
         action="store_true",
         help="показати звичну ціну кожного товару — видно, з чим працює детектор",
+    )
+    parser.add_argument(
+        "--basket",
+        action="store_true",
+        help="кошик: звична і поточна вартість набору товарів як цілого",
+    )
+    parser.add_argument(
+        "--assortment",
+        action="store_true",
+        help="асортимент: типова ціна товару в магазині й ті, що дешевші за неї",
+    )
+    parser.add_argument(
+        "--index",
+        action="store_true",
+        help="індекс: чи магазин загалом подорожчав проти звичного",
+    )
+    parser.add_argument(
+        "--groups",
+        action="store_true",
+        help="товарні групи: порівняння схожих товарів між собою",
+    )
+    parser.add_argument(
+        "--everything",
+        action="store_true",
+        help="усі рівні одразу: товар, кошик, асортимент, індекс, групи",
     )
     parser.add_argument("--log-level", default=None, help="DEBUG/INFO/WARNING")
     return parser
@@ -76,6 +107,69 @@ async def print_modes(session, *, rules: DiscountRules, shop_id: int | None) -> 
         )
 
 
+def short_history_hint(histories) -> str:
+    """Пояснює, чому спільна історія набору коротка.
+
+    Ряд починається з дати, коли відомі всі товари, тож один товар, доданий
+    учора, обрізає весь кошик до одного дня. Без цієї підказки «1 доба
+    історії» виглядає як поломка.
+    """
+    with_start = [(min(day for day, _ in item.points), item) for item in histories if item.points]
+    if not with_start:
+        return ""
+    start, latest = max(with_start, key=lambda pair: pair[0])
+    return (
+        f"ряд починається з {start:%d.%m.%Y} — пізніше за всіх у набір "
+        f"додано «{latest.name[:40]}»"
+    )
+
+
+async def print_levels(histories, *, args: argparse.Namespace, rules: DiscountRules) -> None:
+    """Рівні вище окремого товару: кошик, асортимент, індекс, групи."""
+    if not histories:
+        print("\nІсторії ще немає — нема з чого рахувати рівні вище товару.")
+        return
+
+    points = {item.id: item.points for item in histories}
+    prices_now = {item.id: item.current for item in histories if item.current is not None}
+    names = {item.id: item.name for item in histories}
+    label = dict(names)
+
+    if args.basket or args.everything:
+        report = basket_discount(points, rules=rules)
+        print("\n── Кошик ─────────────────────────────────────────────")
+        print(f"  {report.render()}" if report else "  замало спільної історії")
+        if report is not None and report.days < rules.min_samples:
+            print(f"  {short_history_hint(histories)}")
+
+    if args.assortment or args.everything:
+        report = assortment_report(prices_now, rules=rules)
+        print("\n── Асортимент ────────────────────────────────────────")
+        if report is None:
+            print("  цін немає")
+        else:
+            print(f"  {report.render()}")
+            for item in report.cheaper[:10]:
+                print(f"    {label.get(item.key, item.key)[:50]} — {item.price} "
+                      f"(на {item.drop_percent}% нижче типової)")
+
+    if args.index or args.everything:
+        report = shop_index(points, rules=rules)
+        print("\n── Індекс магазину ───────────────────────────────────")
+        print(f"  {report.render()}" if report else "  замало спільної історії")
+
+    if args.groups or args.everything:
+        reports = group_reports(names, prices_now, rules=rules)
+        print("\n── Товарні групи ─────────────────────────────────────")
+        if not reports:
+            print("  схожих товарів не знайшлось (потрібно щонайменше 3 з одною моделлю)")
+        for report in reports[:10]:
+            print(f"  {report.render()}")
+            for item in report.cheaper[:5]:
+                print(f"    {label.get(item.key, item.key)[:50]} — {item.price} "
+                      f"(на {item.drop_percent}% нижче типової)")
+
+
 async def main_async(args: argparse.Namespace) -> int:
     rules = build_rules(args)
     print(
@@ -97,6 +191,10 @@ async def main_async(args: argparse.Namespace) -> int:
         )
         if args.modes:
             await print_modes(session, rules=rules, shop_id=shop_id)
+
+        if args.basket or args.assortment or args.index or args.groups or args.everything:
+            histories = await load_histories(session, shop_id=shop_id)
+            await print_levels(histories, args=args, rules=rules)
 
     if not found:
         print("Знижок не знайдено.")

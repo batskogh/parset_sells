@@ -29,7 +29,7 @@ from app.config import get_settings
 CENT = Decimal("0.01")
 
 
-def _q(value: Decimal) -> Decimal:
+def to_cents(value: Decimal) -> Decimal:
     return value.quantize(CENT, rounding=ROUND_HALF_UP)
 
 
@@ -62,7 +62,7 @@ class PriceMode:
     @property
     def share(self) -> Decimal:
         """Яку частку історії займає звична ціна — від 0 до 1."""
-        return _q(Decimal(self.hits) / Decimal(self.samples)) if self.samples else Decimal("0")
+        return to_cents(Decimal(self.hits) / Decimal(self.samples)) if self.samples else Decimal("0")
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,7 +76,7 @@ class DiscountSignal:
 
     @property
     def saving(self) -> Decimal:
-        return _q(self.mode - self.current)
+        return to_cents(self.mode - self.current)
 
 
 def _median(values: Sequence[Decimal]) -> Decimal:
@@ -84,7 +84,7 @@ def _median(values: Sequence[Decimal]) -> Decimal:
     middle = len(ordered) // 2
     if len(ordered) % 2:
         return ordered[middle]
-    return _q((ordered[middle - 1] + ordered[middle]) / 2)
+    return to_cents((ordered[middle - 1] + ordered[middle]) / 2)
 
 
 def bucket_step(prices: Sequence[Decimal], bucket_percent: Decimal) -> Decimal:
@@ -97,7 +97,7 @@ def bucket_step(prices: Sequence[Decimal], bucket_percent: Decimal) -> Decimal:
     if not prices:
         return CENT
     step = _median(prices) * bucket_percent / Decimal("100")
-    return max(_q(step), CENT)
+    return max(to_cents(step), CENT)
 
 
 def price_mode(prices: Sequence[Decimal], *, bucket_percent: Decimal = Decimal("1")) -> PriceMode | None:
@@ -158,8 +158,8 @@ def find_discount(
         return None
 
     return DiscountSignal(
-        current=_q(price_now),
-        mode=_q(mode.value),
-        drop_percent=_q(drop),
+        current=to_cents(price_now),
+        mode=to_cents(mode.value),
+        drop_percent=to_cents(drop),
         samples=mode.samples,
     )

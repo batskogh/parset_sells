@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -75,3 +77,51 @@ async def scan_products(
 
     found.sort(key=lambda item: item.signal.drop_percent, reverse=True)
     return found
+
+
+@dataclass(frozen=True, slots=True)
+class ProductHistory:
+    """Товар разом із його історією, зведеною до добових точок."""
+
+    id: int
+    name: str
+    url: str
+    points: list[tuple[date, Decimal]]
+    current: Decimal | None
+    in_stock: bool
+
+
+async def load_histories(
+    session: AsyncSession,
+    *,
+    shop_id: int | None = None,
+    only_in_stock: bool = False,
+) -> list[ProductHistory]:
+    """Витягує товари з історіями — сировина для кошика, індексу й груп.
+
+    Ціни підвантажуються разом із товарами одним запитом, тож окремого
+    звернення до бази на кожен товар тут немає.
+    """
+    products = await repo.list_products(
+        session, repo.ProductFilter(shop_id=shop_id, only_active=True, limit=MAX_PRODUCTS)
+    )
+
+    histories: list[ProductHistory] = []
+    for product in products:
+        prices = product.prices
+        if not prices:
+            continue
+        if only_in_stock and not prices[0].in_stock:
+            continue
+        histories.append(
+            ProductHistory(
+                id=product.id,
+                name=product.name,
+                url=product.url,
+                # у зв'язку найновіші перші, а часова шкала будується вперед
+                points=[(price.parsed_at.date(), price.price) for price in reversed(prices)],
+                current=prices[0].price,
+                in_stock=bool(prices[0].in_stock),
+            )
+        )
+    return histories
