@@ -215,3 +215,44 @@ class Notification(Base):
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<Notification user={self.user_id} product={self.product_id} {self.price}>"
+
+
+class ShopRequest(Base):
+    """Посилання на магазин, якого парсер ще не знає.
+
+    Кожна така спроба — готова заявка на розширення: людина показала, за чим
+    хоче стежити, і зробила це раніше, ніж встигла б написати про це окремо.
+    Без запису вони губляться в чаті, і черга нових магазинів вибудовується
+    навмання замість того, щоб іти за попитом.
+
+    Рядок на кожну спробу, а не лічильник на домен: так видно і скільки разів
+    просили, і скільки різних людей — а це різні речі. Одна людина, що десять
+    разів кинула те саме посилання, і десятеро різних людей — це два різні
+    сигнали, і зводити їх в одне число означало б втратити той, що важливіший.
+
+    `notified_at` ставиться лише на тому рядку, який спричинив повідомлення
+    власнику: за ним видно, коли про домен казали востаннє, і саме він не дає
+    писати про той самий магазин після кожного посилання.
+    """
+
+    __tablename__ = "shop_requests"
+    __table_args__ = (Index("ix_shop_request_host_time", "host", "requested_at"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # домен без www — саме він, а не повна адреса, визначає «той самий магазин»
+    host: Mapped[str] = mapped_column(String(255), index=True)
+    url: Mapped[str] = mapped_column(Text)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("telegram_users.id", ondelete="SET NULL"), index=True, default=None
+    )
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, index=True
+    )
+    notified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+
+    user: Mapped["TelegramUser | None"] = relationship()
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<ShopRequest {self.host} user={self.user_id}>"

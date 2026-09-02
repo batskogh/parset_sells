@@ -10,10 +10,12 @@ from __future__ import annotations
 import logging
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Message
 
 from app.bot import service
+from app.config import get_settings
 from app.bot.keyboards import REMOVE_PREFIX, parse_remove_callback, watch_list_keyboard
 from app.bot.texts import (
     empty_list,
@@ -82,8 +84,28 @@ async def handle_text(message: Message) -> None:
             telegram_id=message.from_user.id,
             chat_id=message.chat.id,
             message_text=message.text,
+            username=message.from_user.username,
         )
     await message.answer(result.text, disable_web_page_preview=True)
+
+    if result.admin_notice:
+        await _tell_owner(message, result.admin_notice)
+
+
+async def _tell_owner(message: Message, text: str) -> None:
+    """Переказує власнику бота те, про що він просив знати.
+
+    Помилка тут не має ламати розмову з людиною: вона вже отримала відповідь,
+    і те, що власнику не дійшов службовий лист, — його клопіт, не її.
+    """
+    owner = get_settings().telegram_chat_id
+    if not owner or str(message.chat.id) == owner:
+        return                                # власнику не переказують його ж слова
+
+    try:
+        await message.bot.send_message(owner, text, disable_web_page_preview=True)
+    except TelegramAPIError as помилка:
+        logger.warning("Не вийшло написати власнику: %s", помилка)
 
 
 @router.message(Command("list"))

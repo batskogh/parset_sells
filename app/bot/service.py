@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from html import escape
 
@@ -17,7 +18,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot import texts
 from app.bot.texts import welcome
+from app.config import get_settings
 from app.core.discount import DiscountRules, price_mode
+from app.core.timeline import daily_values
 from app.parsers import resolve
 from app.parsers.models import ParseResult
 from app.parsers.throttle import DelayPolicy
@@ -61,11 +64,18 @@ async def stop_notifications(session: AsyncSession, *, telegram_id: int) -> bool
 
 @dataclass(frozen=True, slots=True)
 class AddResult:
-    """Наслідок спроби додати товар за посиланням."""
+    """Наслідок спроби додати товар за посиланням.
+
+    `admin_notice` — окремий текст для власника бота, коли є про що йому
+    сказати. Сервіс сам нікому не пише: він лише готує повідомлення, а
+    відправку робить хендлер, у якого є Telegram. Так логіку «кому і про що
+    сказати» можна перевіряти тестами без мережі.
+    """
 
     ok: bool
     text: str
     product_id: int | None = None
+    admin_notice: str | None = None
 
 
 async def add_product_by_url(
@@ -74,6 +84,7 @@ async def add_product_by_url(
     telegram_id: int,
     chat_id: int,
     message_text: str | None,
+    username: str | None = None,
 ) -> AddResult:
     """Розбирає повідомлення з посиланням і бере товар під нагляд.
 
@@ -91,7 +102,14 @@ async def add_product_by_url(
         disabled = resolve.find_parser_for_url(url, only_enabled=False)
         if disabled is not None:
             return AddResult(False, texts.shop_blocked(disabled.title or disabled.name))
-        return AddResult(False, texts.unknown_shop(resolve.known_shops()))
+        notice = await remember_unknown_shop(
+            session,
+            url=url,
+            telegram_id=telegram_id,
+            chat_id=chat_id,
+            username=username,
+        )
+        return AddResult(False, texts.unknown_shop(resolve.known_shops()), admin_notice=notice)
 
     if not resolve.supports_single_product(parser_class):
         return AddResult(False, texts.catalog_only_shop(parser_class.title or parser_class.name))
@@ -142,6 +160,68 @@ async def add_product_by_url(
     )
 
 
+async def remember_unknown_shop(
+    session: AsyncSession,
+    *,
+    url: str,
+    telegram_id: int,
+    chat_id: int,
+    username: str | None = None,
+    now: datetime | None = None,
+    cooldown_hours: int | None = None,
+) -> str | None:
+    """Записує заявку на невідомий магазин і вирішує, чи казати про це власнику.
+
+    Записуємо **завжди**: посилання на чужий магазин — це готова заявка на
+    розширення, і черга нових магазинів має вибудовуватись за попитом.
+
+    А от повідомляти власника — не завжди. Одне посилання, кинуте вп'яте,
+    нічого нового не додає, тож про той самий домен пишемо не частіше, ніж
+    раз на `cooldown_hours`. Мовчання тут не втрачає сигнал: він лишається
+    в базі, і наступне повідомлення покаже, скільки разів просили загалом.
+
+    Повертає готовий текст для власника або None, якщо казати нема про що.
+    """
+    host = resolve.host_of(url)
+    if not host:
+        return None
+
+    now = now or datetime.now(timezone.utc)
+    if cooldown_hours is None:
+        cooldown_hours = get_settings().shop_request_cooldown_hours
+
+    user, _ = await repo.get_or_create_user(
+        session, telegram_id=telegram_id, chat_id=chat_id, username=username
+    )
+    request = await repo.add_shop_request(session, host=host, url=url, user_id=user.id)
+    demand = await repo.shop_demand(session, host)
+
+    if not _time_to_tell(demand.last_notified_at, now=now, cooldown_hours=cooldown_hours):
+        logger.info("Заявка на %s записана, власнику вже казали", host)
+        return None
+
+    await repo.mark_shop_request_notified(session, request.id, notified_at=now)
+    logger.info("Нова заявка на магазин %s (спроб: %s)", host, demand.times)
+    return texts.new_shop_request(
+        host=host,
+        url=url,
+        times=demand.times,
+        people=demand.people,
+        who=f"@{username}" if username else str(telegram_id),
+    )
+
+
+def _time_to_tell(
+    last_notified_at: datetime | None, *, now: datetime, cooldown_hours: int
+) -> bool:
+    """Чи минуло досить часу з останньої розмови про цей магазин."""
+    if last_notified_at is None:
+        return True
+    if last_notified_at.tzinfo is None:            # зі SQLite час приходить «наївним»
+        last_notified_at = last_notified_at.replace(tzinfo=timezone.utc)
+    return now - last_notified_at >= timedelta(hours=cooldown_hours)
+
+
 async def _fetch_single(parser_class, url: str) -> ParseResult:
     """Один похід на сторінку товару без запису в базу."""
     parser = parser_class(product_urls=[url], delay=DelayPolicy(min_delay=0, max_delay=0))
@@ -180,7 +260,7 @@ async def list_watched(session: AsyncSession, *, telegram_id: int) -> list[Watch
         product = subscription.product
         prices = product.prices                      # найновіша перша
         last = prices[0] if prices else None
-        history = [price.price for price in reversed(prices)]
+        history = daily_values((price.parsed_at, price.price) for price in prices)
         mode = price_mode(history, bucket_percent=rules.bucket_percent) if history else None
 
         items.append(

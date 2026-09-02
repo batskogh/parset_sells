@@ -18,6 +18,7 @@ from app.db.models import (
     Price,
     Product,
     Shop,
+    ShopRequest,
     Subscription,
     TelegramUser,
     utcnow,
@@ -491,3 +492,82 @@ async def subscriptions_for_product(
         .options(joinedload(Subscription.user))
     )
     return list((await session.execute(stmt)).unique().scalars().all())
+
+
+# ------------------------------------------------- запити на нові магазини
+
+
+async def add_shop_request(
+    session: AsyncSession,
+    *,
+    host: str,
+    url: str,
+    user_id: int | None = None,
+    requested_at: datetime | None = None,
+) -> ShopRequest:
+    """Записує спробу додати товар із магазину, якого парсер не знає."""
+    row = ShopRequest(
+        host=host,
+        url=url,
+        user_id=user_id,
+        requested_at=requested_at or utcnow(),
+    )
+    session.add(row)
+    await session.flush()
+    return row
+
+
+@dataclass(frozen=True, slots=True)
+class ShopDemand:
+    """Скільки разів і скільки різних людей просили один магазин."""
+
+    host: str
+    times: int
+    people: int
+    last_notified_at: datetime | None
+
+
+async def shop_demand(session: AsyncSession, host: str) -> ShopDemand:
+    """Попит на магазин і момент, коли про нього казали власнику востаннє."""
+    stmt = select(
+        func.count(ShopRequest.id),
+        func.count(func.distinct(ShopRequest.user_id)),
+        func.max(ShopRequest.notified_at),
+    ).where(ShopRequest.host == host)
+    times, people, last = (await session.execute(stmt)).one()
+    return ShopDemand(
+        host=host,
+        times=int(times or 0),
+        people=int(people or 0),
+        last_notified_at=last,
+    )
+
+
+async def mark_shop_request_notified(
+    session: AsyncSession, request_id: int, *, notified_at: datetime | None = None
+) -> None:
+    """Позначає заявку як таку, про яку власнику вже сказали."""
+    row = await session.get(ShopRequest, request_id)
+    if row is not None:
+        row.notified_at = notified_at or utcnow()
+        await session.flush()
+
+
+async def list_shop_requests(session: AsyncSession, *, limit: int = 50) -> list[ShopDemand]:
+    """Найзатребуваніші невідомі магазини — спершу ті, кого просили частіше."""
+    stmt = (
+        select(
+            ShopRequest.host,
+            func.count(ShopRequest.id),
+            func.count(func.distinct(ShopRequest.user_id)),
+            func.max(ShopRequest.notified_at),
+        )
+        .group_by(ShopRequest.host)
+        .order_by(func.count(ShopRequest.id).desc())
+        .limit(limit)
+    )
+    rows = (await session.execute(stmt)).all()
+    return [
+        ShopDemand(host=host, times=int(times), people=int(people), last_notified_at=last)
+        for host, times, people, last in rows
+    ]

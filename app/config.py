@@ -74,6 +74,7 @@ class Settings:
     discount_bucket_percent: float
     notify_cooldown_hours: int
     notify_deeper_percent: float
+    shop_request_cooldown_hours: int
 
     @property
     def db_url(self) -> str:
@@ -113,4 +114,5 @@ def get_settings() -> Settings:
         discount_bucket_percent=_get_float("DISCOUNT_BUCKET_PERCENT", 1.0),
         notify_cooldown_hours=_get_int("NOTIFY_COOLDOWN_HOURS", 24),
         notify_deeper_percent=_get_float("NOTIFY_DEEPER_PERCENT", 10.0),
+        shop_request_cooldown_hours=_get_int("SHOP_REQUEST_COOLDOWN_HOURS", 24),
     )

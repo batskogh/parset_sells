@@ -70,6 +70,29 @@ def unknown_shop(shops: list[tuple[str, str]]) -> str:
     )
 
 
+def new_shop_request(
+    *, host: str, url: str, times: int, people: int, who: str | None = None
+) -> str:
+    """Повідомлення власнику: хтось просить магазин, якого парсер не знає.
+
+    Показуємо і кількість спроб, і кількість людей: одна людина, що десять
+    разів кинула те саме посилання, і десятеро різних людей — це два різні
+    сигнали, і друге важливіше.
+    """
+    домен = escape(host)
+    адреса = escape(url, quote=True)
+    рядки = [
+        "<b>Просять магазин, якого я не знаю</b>",
+        "",
+        f"Домен: <b>{домен}</b>",
+        f"Спроб: {times} · різних людей: {people}",
+    ]
+    if who:
+        рядки.append(f"Останній запит: {escape(who)}")
+    рядки += ["", f'<a href="{адреса}">Подивитись сторінку</a>']
+    return "\n".join(рядки)
+
+
 def shop_blocked(title: str) -> str:
     return (
         f"{title} я знаю, але зараз не можу звідти читати ціни: сайт закритий "
@@ -178,7 +201,7 @@ def discount_alert(
         f"Ціна: <b>{price} {currency}</b> (було звично {usual})",
         f"Дешевше на {drop_percent}% — це {saving} {currency}",
         "",
-        f"Звичну ціну пораховано за {samples} замірами.",
+        f"Звичну ціну пораховано за {samples} днями спостережень.",
     ]
     if not in_stock:
         рядки.append("Але зараз товару немає в наявності.")
