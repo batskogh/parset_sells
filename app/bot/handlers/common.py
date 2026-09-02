@@ -15,7 +15,6 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Message
 
 from app.bot import service
-from app.config import get_settings
 from app.bot.keyboards import REMOVE_PREFIX, parse_remove_callback, watch_list_keyboard
 from app.bot.texts import (
     empty_list,
@@ -23,9 +22,12 @@ from app.bot.texts import (
     not_a_link,
     remove_failed,
     removed,
+    shop_demand_list,
     stopped,
     watch_list,
 )
+from app.config import get_settings
+from app.db import repository as repo
 from app.db.base import session_scope
 from app.parsers.resolve import extract_url
 
@@ -64,48 +66,21 @@ async def handle_stop(message: Message) -> None:
     await message.answer(stopped())
 
 
-@router.message(F.text)
-async def handle_text(message: Message) -> None:
-    """Будь-який текст, що не команда, — спроба додати товар за посиланням."""
-    if message.from_user is None:
-        return
+@router.message(Command("shops"))
+async def handle_shops(message: Message) -> None:
+    """Попит на магазини, яких парсер не знає. Команда власника.
 
-    url = extract_url(message.text)
-    if url is None:
-        await message.answer(not_a_link())
-        return
-
-    # похід на сторінку займає секунди — хай людина бачить, що бот не завис
-    await message.chat.do("typing")
-
-    async with session_scope() as session:
-        result = await service.add_product_by_url(
-            session,
-            telegram_id=message.from_user.id,
-            chat_id=message.chat.id,
-            message_text=message.text,
-            username=message.from_user.username,
-        )
-    await message.answer(result.text, disable_web_page_preview=True)
-
-    if result.admin_notice:
-        await _tell_owner(message, result.admin_notice)
-
-
-async def _tell_owner(message: Message, text: str) -> None:
-    """Переказує власнику бота те, про що він просив знати.
-
-    Помилка тут не має ламати розмову з людиною: вона вже отримала відповідь,
-    і те, що власнику не дійшов службовий лист, — його клопіт, не її.
+    У меню Telegram її навмисно немає: меню бачать усі, а список заявок —
+    внутрішня кухня. Хто не власник, того команда просто не помічає.
     """
     owner = get_settings().telegram_chat_id
-    if not owner or str(message.chat.id) == owner:
-        return                                # власнику не переказують його ж слова
+    if not owner or str(message.chat.id) != owner:
+        return
 
-    try:
-        await message.bot.send_message(owner, text, disable_web_page_preview=True)
-    except TelegramAPIError as помилка:
-        logger.warning("Не вийшло написати власнику: %s", помилка)
+    async with session_scope() as session:
+        items = await repo.list_shop_requests(session)
+
+    await message.answer(shop_demand_list(items))
 
 
 @router.message(Command("list"))
@@ -153,3 +128,53 @@ async def handle_remove(callback: CallbackQuery) -> None:
             )
         else:
             await callback.message.edit_text(empty_list())
+
+
+# Ловець усього. Стоїть останнім навмисно: aiogram перебирає хендлери в
+# порядку оголошення, і `F.text` збігається геть з усім, включно з текстом
+# команди. Оголошений вище, він перехопив би /list та /shops, і людина
+# отримала б «не бачу посилання» замість свого списку. Фільтр на «не
+# команда» — другий замок на ті самі двері: щоб наступна команда, дописана
+# нижче за неуважністю, не зникла мовчки
+@router.message(F.text, ~F.text.startswith("/"))
+async def handle_text(message: Message) -> None:
+    """Будь-який текст, що не команда, — спроба додати товар за посиланням."""
+    if message.from_user is None:
+        return
+
+    url = extract_url(message.text)
+    if url is None:
+        await message.answer(not_a_link())
+        return
+
+    # похід на сторінку займає секунди — хай людина бачить, що бот не завис
+    await message.chat.do("typing")
+
+    async with session_scope() as session:
+        result = await service.add_product_by_url(
+            session,
+            telegram_id=message.from_user.id,
+            chat_id=message.chat.id,
+            message_text=message.text,
+            username=message.from_user.username,
+        )
+    await message.answer(result.text, disable_web_page_preview=True)
+
+    if result.admin_notice:
+        await _tell_owner(message, result.admin_notice)
+
+
+async def _tell_owner(message: Message, text: str) -> None:
+    """Переказує власнику бота те, про що він просив знати.
+
+    Помилка тут не має ламати розмову з людиною: вона вже отримала відповідь,
+    і те, що власнику не дійшов службовий лист, — його клопіт, не її.
+    """
+    owner = get_settings().telegram_chat_id
+    if not owner or str(message.chat.id) == owner:
+        return                                # власнику не переказують його ж слова
+
+    try:
+        await message.bot.send_message(owner, text, disable_web_page_preview=True)
+    except TelegramAPIError as помилка:
+        logger.warning("Не вийшло написати власнику: %s", помилка)
