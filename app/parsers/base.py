@@ -484,12 +484,17 @@ class LdJsonProductParser(BaseParser):
         tail = url.rstrip("/").rsplit("/", 1)[-1]
         return tail or None
 
-    def canonical_url(self, product: dict, url: str) -> str:
-        """Адреса, під якою товар лягає в базу — без рекламних міток."""
+    def canonical_url(self, product: dict, offer: dict, url: str) -> str:
+        """Адреса, під якою товар лягає в базу — без рекламних міток.
+
+        Канонічну адресу сайт кладе то в `Product.url`, то в `Offer.url`,
+        тож дивимось в обидва місця.
+        """
         if self.prefer_canonical_url:
-            declared = clean_text(str(product.get("url") or ""))
-            if declared:
-                return strip_tracking_params(absolute_url(self.base_url, declared))
+            for source in (product, offer):
+                declared = clean_text(str(source.get("url") or ""))
+                if declared:
+                    return strip_tracking_params(absolute_url(self.base_url, declared))
         return strip_tracking_params(url)
 
     # -------------------------------------------------------------- складання
@@ -511,7 +516,7 @@ class LdJsonProductParser(BaseParser):
             self.report_error(f"Не знайдено назву: {url}")
             return None
 
-        final_url = self.canonical_url(product, url)
+        final_url = self.canonical_url(product, offer, url)
         return ParsedProduct(
             name=name,
             url=final_url,
