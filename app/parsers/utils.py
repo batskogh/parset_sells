@@ -51,18 +51,21 @@ def parse_price(raw: str | None) -> Decimal | None:
         text = text.replace(thousand_sep, "").replace(decimal_sep, ".")
     elif has_comma or has_dot:
         sep = "," if has_comma else "."
-        tail = text.rsplit(sep, 1)[1]
-        # рівно 3 цифри після одного роздільника — це розділювач тисяч (1.299)
-        if len(tail) == 3 and text.count(sep) >= 1 and len(text.replace(sep, "")) > 3:
+        head, tail = text.rsplit(sep, 1)
+        # рівно 3 цифри після одного роздільника — це розділювач тисяч (1.299),
+        # але не тоді, коли ціла частина нульова: 0.750 — це 75 копійок
+        if len(tail) == 3 and len(text.replace(sep, "")) > 3 and head.strip("-") != "0":
             text = text.replace(sep, "")
         else:
             text = text.replace(sep, ".")
 
     try:
-        value = Decimal(text)
+        value = Decimal(text).quantize(Decimal("0.01"))
     except InvalidOperation:
+        # сміття вигляду "1e999" або число, довше за точність Decimal
         return None
-    return value.quantize(Decimal("0.01"))
+    # від'ємної ціни не буває: це або помилка розбору, або чуже число поруч
+    return value if value >= 0 else None
 
 
 def detect_currency(raw: str | None, default: str = "UAH") -> str:
