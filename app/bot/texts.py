@@ -147,3 +147,41 @@ def removed(name: str) -> str:
 
 def remove_failed() -> str:
     return "Цього товару у твоєму списку вже немає."
+
+
+# ------------------------------------------------------------- сповіщення
+
+
+def discount_alert(
+    *,
+    name: str,
+    url: str,
+    price: str,
+    currency: str,
+    usual: str,
+    drop_percent: str,
+    saving: str,
+    samples: int,
+    in_stock: bool = True,
+) -> str:
+    """Сповіщення про знижку.
+
+    Головне — не сам відсоток, а від чого він рахується: людина має бачити
+    звичну ціну й кількість замірів, щоб зрозуміти, чому це не чергова
+    перекреслена ціна з сайту.
+    """
+    назва = escape(name[:90])
+    адреса = escape(url, quote=True)
+    рядки = [
+        f"<b>{назва}</b>",
+        "",
+        f"Ціна: <b>{price} {currency}</b> (було звично {usual})",
+        f"Дешевше на {drop_percent}% — це {saving} {currency}",
+        "",
+        f"Звичну ціну пораховано за {samples} замірами.",
+    ]
+    if not in_stock:
+        рядки.append("Але зараз товару немає в наявності.")
+    рядки.append("")
+    рядки.append(f'<a href="{адреса}">Відкрити в магазині</a>')
+    return "\n".join(рядки)

@@ -470,3 +470,24 @@ async def product_urls_for_shop(session: AsyncSession, slug: str) -> list[str]:
         .order_by(Product.id)
     )
     return list((await session.execute(stmt)).scalars().all())
+
+
+async def subscriptions_for_product(
+    session: AsyncSession, product_id: int
+) -> list[Subscription]:
+    """Активні підписки на товар разом із людьми — адресати сповіщення.
+
+    Приглушені підписки й вимкнені користувачі відсіюються тут, а не в
+    розсилці: так неможливо випадково написати тому, хто просив не писати.
+    """
+    stmt = (
+        select(Subscription)
+        .join(TelegramUser, TelegramUser.id == Subscription.user_id)
+        .where(
+            Subscription.product_id == product_id,
+            Subscription.is_muted.is_(False),
+            TelegramUser.is_active.is_(True),
+        )
+        .options(joinedload(Subscription.user))
+    )
+    return list((await session.execute(stmt)).unique().scalars().all())
