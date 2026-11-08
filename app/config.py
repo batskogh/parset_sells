@@ -82,6 +82,9 @@ class Settings:
     shop_request_cooldown_hours: int
     health_silent_days: int
     health_repeat_hours: int
+    schedule_parse_hours: str
+    schedule_notify_hours: str
+    schedule_backup_hours: str
 
     @property
     def db_url(self) -> str:
@@ -133,4 +136,7 @@ def get_settings() -> Settings:
         shop_request_cooldown_hours=_get_int("SHOP_REQUEST_COOLDOWN_HOURS", 24),
         health_silent_days=_get_int("HEALTH_SILENT_DAYS", 2),
         health_repeat_hours=_get_int("HEALTH_REPEAT_HOURS", 24),
+        schedule_parse_hours=_get_str("SCHEDULE_PARSE_HOURS", "0,6,12,18"),
+        schedule_notify_hours=_get_str("SCHEDULE_NOTIFY_HOURS", "7,13,19"),
+        schedule_backup_hours=_get_str("SCHEDULE_BACKUP_HOURS", "3"),
     )

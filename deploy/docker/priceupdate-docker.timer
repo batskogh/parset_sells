@@ -1,0 +1,12 @@
+[Unit]
+Description=Щогодинна перевірка оновлень для Docker-розгортання
+
+[Timer]
+# О сороковій хвилині: обхід стартує на початку години й зазвичай уже
+# завершений; якщо ні — скрипт сам відкладе оновлення до наступного разу
+OnCalendar=*-*-* *:40:00
+RandomizedDelaySec=5min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

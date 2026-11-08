@@ -17,8 +17,13 @@ from pathlib import Path
 import pytest
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-ДОКУМЕНТИ = [BASE_DIR / "README.md", BASE_DIR / "deploy" / "README.md"]
-ТОЧКИ_ВХОДУ = ["run_parser", "run_notify", "run_discounts", "run_web", "run_bot"]
+ДОКУМЕНТИ = [
+    BASE_DIR / "README.md",
+    BASE_DIR / "deploy" / "README.md",
+    BASE_DIR / "deploy" / "DOCKER.md",
+    BASE_DIR / "deploy" / "AGENT_SETUP.md",
+]
+ТОЧКИ_ВХОДУ = ["run_parser", "run_notify", "run_discounts", "run_web", "run_bot", "run_scheduler"]
 
 # прапорці, які дає сам argparse або чужі програми в прикладах
 СТОРОННІ = {"--help", "--dir", "--keep", "--now", "--recurse-submodules"}

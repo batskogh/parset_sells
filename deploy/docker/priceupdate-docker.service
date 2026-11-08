@@ -1,0 +1,15 @@
+# Оновлення Docker-розгортання з git. Працює на хості Docker від root:
+# йому потрібен доступ до docker і право перезапускати контейнери.
+
+[Unit]
+Description=Парсер цін — оновлення Docker-розгортання з git
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/parset_sells
+ExecStart=/opt/parset_sells/deploy/docker/update.sh
+# збірка образу й тести — найдовша частина
+TimeoutStartSec=30min

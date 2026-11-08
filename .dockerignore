@@ -1,0 +1,21 @@
+# Секрети в образ не потрапляють: .env підставляє compose через env_file
+.env
+
+# Дані живуть у томах, а не в образі — інакше кожна збірка везла б базу
+data/
+logs/
+backups/
+*.db
+*.db-wal
+*.db-shm
+
+.git/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.idea/
+.vscode/
+.claude/
+.ssh/

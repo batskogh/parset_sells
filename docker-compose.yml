@@ -1,0 +1,55 @@
+# Парсер цін у Docker: бот + планувальник прогонів + разові міграції.
+#
+#   docker compose up -d --build       # зібрати й запустити
+#   docker compose logs -f bot         # що каже бот
+#   docker compose exec scheduler python run_scheduler.py --plan
+#
+# Детально — deploy/DOCKER.md.
+
+name: pricebot
+
+x-app: &app
+  build: .
+  image: pricebot:latest
+  env_file: .env
+  environment:
+    # розклад і тихі години рахуються за місцевим часом контейнера
+    TZ: Europe/Kyiv
+  volumes:
+    - ./data:/app/data
+    - ./logs:/app/logs
+    - ./backups:/app/backups
+  # Python як процес №1 у контейнері не помирає від SIGTERM — ядро ігнорує
+  # сигнали без обробника для PID 1. Без init `docker stop` щоразу чекав би
+  # 10 секунд і добивав би процес SIGKILL посеред запису в базу
+  init: true
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  # Разовий крок перед стартом: схема бази до поточної версії. Окремо, бо бот
+  # і планувальник стартують одночасно, і на свіжій базі обидва полізли б
+  # створювати ті самі таблиці
+  migrate:
+    <<: *app
+    command: ["python", "-c", "from app.db.migrate import upgrade_database; upgrade_database()"]
+    restart: "no"
+
+  bot:
+    <<: *app
+    command: ["python", "run_bot.py"]
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  scheduler:
+    <<: *app
+    command: ["python", "run_scheduler.py"]
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
