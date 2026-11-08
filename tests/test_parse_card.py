@@ -1,7 +1,7 @@
 """Тести розбору картки товару зі збережених сторінок.
 
 Сторінки в `fixtures/` — не вигадана розмітка, а зрізи з живих сайтів
-(books.toscrape, citrus, maudau). Мережі тут немає: тести мають ловити зміну
+(books.toscrape, citrus, maudau, silpo). Мережі тут немає: тести мають ловити зміну
 логіки розбору, а не падати від того, що магазин ліг або підняв ціну.
 
 Коли якийсь із сайтів переробить розмітку, тест не побачить цього — це нормально,
@@ -19,6 +19,7 @@ import pytest
 from app.parsers.sites.citrus import CitrusParser
 from app.parsers.sites.demo_books import DemoBooksParser
 from app.parsers.sites.maudau import MaudauParser
+from app.parsers.sites.silpo import SilpoParser
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -125,6 +126,23 @@ def test_чистить_рекламні_мітки_навіть_без_кано
     )
     assert item is not None
     assert item.url == "https://maudau.com.ua/product/chipsy-872080"
+
+
+def test_розбирає_сторінку_silpo() -> None:
+    """Перед Product у Сільпо стоїть ld+json WebPage — брати треба саме Product."""
+    parser = SilpoParser()
+    url = "https://silpo.ua/product/sukharyky-jokers-pshenychno-zhytni-smak-smetana-ta-zelen-1021809"
+
+    item = parser.parse_product_page(fixture("silpo_product.html"), f"{url}?utm_source=telegram")
+
+    assert item is not None
+    assert item.name == "Сухарики Jokers пшенично-житні смак сметана та зелень 125г"
+    assert item.price == Decimal("28.99")
+    assert item.currency == "UAH"
+    assert item.in_stock is True
+    assert item.external_id == "1021809"     # sku з розмітки, збігається з хвостом адреси
+    assert item.url == url                   # канонічна адреса з розмітки, без міток
+    assert item.image_url and item.image_url.startswith("https://images.silpo.ua/")
 
 
 # ---------------------------------------------------------------- збої розбору

@@ -83,6 +83,14 @@ def test_вимкнений_магазин_знаходиться_лише_яв�
     assert parser is not None and parser.name == "staff_clothes"
 
 
+def test_сільпо_відомий_але_вимкнений() -> None:
+    """Сільпо за Cloudflare: посилання не має ставати заявкою на невідомий магазин."""
+    url = "https://silpo.ua/product/sukharyky-jokers-pshenychno-zhytni-smak-smetana-ta-zelen-1021809"
+    assert find_parser_for_url(url) is None
+    parser = find_parser_for_url(url, only_enabled=False)
+    assert parser is not None and parser.name == "silpo"
+
+
 def test_каталожний_парсер_не_приймає_окремий_товар() -> None:
     from app.parsers.sites.citrus import CitrusParser
     from app.parsers.sites.demo_books import DemoBooksParser
